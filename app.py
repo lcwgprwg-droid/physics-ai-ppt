@@ -17,21 +17,6 @@ from pptx.enum.text import PP_ALIGN, MSO_AUTO_SIZE
 from pptx.oxml.ns import qn
 from PIL import Image, ImageEnhance, ImageDraw
 
-# ==========================================
-# 核心引擎库 (下面是你原来的代码，千万别动)
-# ==========================================
-def crop_diagrams(img_path, out_dir):
-# ... 后面的代码保持原样 ...
-
-
-from rapidocr_onnxruntime import RapidOCR
-from pptx import Presentation
-from pptx.util import Inches, Pt
-from pptx.dml.color import RGBColor
-from pptx.enum.shapes import MSO_SHAPE
-from pptx.enum.text import PP_ALIGN, MSO_AUTO_SIZE
-from pptx.oxml.ns import qn
-from PIL import Image, ImageEnhance, ImageDraw
 
 
 # ==========================================
