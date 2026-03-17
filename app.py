@@ -1,25 +1,44 @@
+import sys
 import os
-import time
+import subprocess
 
 # =================================================================
-# 🚀 终极防崩溃黑科技：强制云端服务器使用无头版 OpenCV
+# 🚀 史诗级黑科技：捕捉 OpenCV 报错并进行“活体换头手术”
 # =================================================================
-if not os.path.exists('/tmp/cv2_fixed.txt'):
-    os.system('pip uninstall -y opencv-python')
-    os.system('pip uninstall -y opencv-python-headless')
-    os.system('pip install opencv-python-headless')
-    os.system('touch /tmp/cv2_fixed.txt')
+try:
+    import cv2
+except ImportError:
+    # 加上安全锁，防止无限重启
+    if not os.path.exists('/tmp/cv2_fixed_final.txt'):
+        print("⚠️ 检测到云端环境 OpenCV 冲突，正在进行底层修复...")
+        # 1. 绝对精准：调用当前虚拟环境的 pip 强行卸载所有冲突版本
+        subprocess.call([sys.executable, '-m', 'pip', 'uninstall', '-y', 'opencv-python', 'opencv-python-headless'])
+        # 2. 强行只安装纯净无头版
+        subprocess.call([sys.executable, '-m', 'pip', 'install', 'opencv-python-headless'])
+        # 3. 记录修复状态
+        with open('/tmp/cv2_fixed_final.txt', 'w') as f:
+            f.write('fixed')
+        # 4. 终极大招：强行重启当前 Python 进程，清空内存缓存让新库生效！
+        os.execl(sys.executable, sys.executable, *sys.argv)
 
-import cv2
 import re
 import math
+import time
 import tempfile
 import io
 import streamlit as st
-import fitz  # PyMuPDF，用于处理 PDF
-import docx  # 用于处理 Word
+import fitz  # PyMuPDF
+import docx  # Python-docx
+from rapidocr_onnxruntime import RapidOCR
+from pptx import Presentation
+from pptx.util import Inches, Pt
+from pptx.dml.color import RGBColor
+from pptx.enum.shapes import MSO_SHAPE
+from pptx.enum.text import PP_ALIGN, MSO_AUTO_SIZE
+from pptx.oxml.ns import qn
+from PIL import Image, ImageEnhance, ImageDraw
 
-# ... 下面全都是你原来的代码，保持不动 ...
+# ... 下面全都是你原来的功能代码（def crop_diagrams 等等），保持绝对不动 ...
 
 
 from rapidocr_onnxruntime import RapidOCR
