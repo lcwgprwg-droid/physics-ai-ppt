@@ -1,0 +1,8 @@
+streamlit
+opencv-python-headless
+rapidocr-onnxruntime
+python-pptx
+Pillow
+PyMuPDF
+python-docx
+numpy
