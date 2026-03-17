@@ -55,14 +55,11 @@ def extract_images_with_ocr_mask(img_path, ocr_result, out_dir, pdf_page=None, s
     mask = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 15, 4)
     del gray
 
-    # 【黑科技 1】：语义级选择性遮罩
     if ocr_result:
         for line in ocr_result:
             text = line[1].strip()
             box = line[0]
             
-            # 智能判断：如果是短字符(如 a, b)或纯数字公式，说明是图表内部标签，保留！
-            # 如果是长文本，说明是正文段落，无情擦除抹黑！
             is_label = False
             if len(text) <= 5: is_label = True
             if re.match(r'^[\d\.\-\+\=\>]+$', text): is_label = True
@@ -95,23 +92,18 @@ def extract_images_with_ocr_mask(img_path, ocr_result, out_dir, pdf_page=None, s
 
     saved_imgs =[]
     for i, (x, y, w, h) in enumerate(merged_boxes):
-        # 由于我们保留了内部标签，外围扩展从 25 缩小到 8，彻底杜绝粘连上下题目文字！
         pad = 8 
         x1, y1 = max(0, x - pad), max(0, y - pad)
         x2, y2 = min(img.shape[1], x + w + pad), min(img.shape[0], y + h + pad)
 
         p = os.path.join(out_dir, f"fig_{int(time.time()*1000)}_{i}.png")
         
-        # 【黑科技 2】：PDF 矢量级 400% 定点超清渲染！
         if pdf_page is not None:
-            # 换算回真实的 PDF 坐标
             pdf_rect = fitz.Rect(x1/scale_factor, y1/scale_factor, x2/scale_factor, y2/scale_factor)
-            # 以 4.0 倍矩阵进行局部极度高清渲染 (完全不耗费多余内存)
             pix = pdf_page.get_pixmap(matrix=fitz.Matrix(4.0, 4.0), clip=pdf_rect)
             pix.save(p)
             pix = None
         else:
-            # 普通图片的高清裁剪
             roi = img[y1:y2, x1:x2]
             roi_rgb = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
             pil_img = ImageEnhance.Sharpness(ImageEnhance.Contrast(Image.fromarray(roi_rgb)).enhance(1.1)).enhance(1.5)
@@ -141,12 +133,18 @@ def smart_ocr_and_split(img_path, temp_dir, pdf_page=None):
     gc.collect() 
     
     cv_images = extract_images_with_ocr_mask(img_path, result, temp_dir, pdf_page=pdf_page)
-    if not result: return[], cv_images
-
+    
+    # 提前获取中心坐标
     img_cv = cv2.imread(img_path)
     page_center_x = img_cv.shape[1] / 2
     del img_cv
     gc.collect()
+
+    # 【核心修复】：为截取出来的每张图片打上左右栏（col）标签，防止全局引擎找不到对应列而崩溃
+    for img in cv_images:
+        img['col'] = 0 if img['x_center'] < page_center_x else 1
+
+    if not result: return[], cv_images
 
     sorted_lines =[]
     for line in result:
@@ -181,14 +179,13 @@ def smart_ocr_and_split(img_path, temp_dir, pdf_page=None):
         q_cx = (q['x_min'] + q['x_max']) / 2
         q['col'] = 0 if q_cx < page_center_x else 1
 
-    # 【注意】我们不再在这里做图文匹配，而是将数据返回，交给全局引擎处理！
     return questions, cv_images
 
 # ==========================================
 # 核心路由：全局时空坐标系映射引擎 (解跨页翻页问题)
 # ==========================================
 def process_uploaded_files(uploaded_files, temp_dir):
-    all_items =[]  # 全局数据池
+    all_items =[]  
     global_page_idx = 0
 
     for file in uploaded_files:
@@ -208,14 +205,12 @@ def process_uploaded_files(uploaded_files, temp_dir):
             pdf_doc = fitz.open(stream=file_bytes, filetype="pdf")
             for page_num in range(len(pdf_doc)):
                 page = pdf_doc.load_page(page_num)
-                # 依然是 1.5 倍扫描找坐标，节省内存
                 pix = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5))
                 temp_img_path = os.path.join(temp_dir, f"pdf_{file.name}_page_{page_num}.jpg")
                 pix.save(temp_img_path)
                 pix = None 
                 gc.collect()
                 
-                # 传入 page 对象，支持 400% 超清局部爆破渲染
                 qs, imgs = smart_ocr_and_split(temp_img_path, temp_dir, pdf_page=page)
                 for q in qs: all_items.append({'type': 'q', 'page': global_page_idx, 'col': q['col'], 'y': q['y_min'], 'data': q})
                 for img in imgs: all_items.append({'type': 'img', 'page': global_page_idx, 'col': img['col'], 'y': img['y_center'], 'data': img})
@@ -235,8 +230,6 @@ def process_uploaded_files(uploaded_files, temp_dir):
             if current_q: all_items.append({'type': 'q', 'page': global_page_idx, 'col': 0, 'y': 0, 'data': current_q})
             global_page_idx += 1
 
-    # 【黑科技 3】：全局时空排序匹配（跨页/翻页/分栏完美衔接）
-    # 无论横跨几页，严格按照人类阅读顺序（页码 -> 左/右栏 -> 从上到下）排序
     all_items.sort(key=lambda x: (x['page'], x['col'], x['y']))
     
     final_questions =[]
@@ -247,7 +240,6 @@ def process_uploaded_files(uploaded_files, temp_dir):
             current_q_ref = item['data']
             final_questions.append(current_q_ref)
         elif item['type'] == 'img':
-            # 如果出现了一张图，直接分配给它“上方”（排序前）最近出现的那道题！哪怕横跨了三页纸！
             if current_q_ref:
                 current_q_ref['matched_imgs'].append(item['data']['path'])
             elif len(final_questions) > 0:
