@@ -20,11 +20,14 @@ from pptx.oxml.ns import qn
 from PIL import Image, ImageEnhance
 
 # ==========================================
-# 核心引擎库 (OpenCV 形态学搭桥 + 动态核弹级擦除)
+# 核心引擎库：全局缓存 OCR 模型 (极速且防卡死)
 # ==========================================
+@st.cache_resource
+def get_ocr_engine():
+    """将庞大的AI模型常驻内存，只加载一次，拒绝重复加载导致的内存爆炸"""
+    return RapidOCR()
 
 def merge_rects(rects, x_margin=60, y_margin=60):
-    """合并距离相近的碎图块（容差增大，确保上下两对碱基合并为一图）"""
     if not rects: return []
     boxes = [[r[0], r[1], r[0]+r[2], r[1]+r[3]] for r in rects] 
 
@@ -53,19 +56,15 @@ def extract_images_with_ocr_mask(img_path, ocr_result, out_dir, pdf_page=None, s
     if img is None: return[]
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    
-    # 1. 采用 Otsu 自适应二值化（最适合干净的黑白卷面，彻底消除浅色干扰）
     _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
     del gray
 
-    # 2. 动态核弹级文字擦除
     text_erase_mask = np.zeros_like(thresh)
     if ocr_result:
         for line in ocr_result:
             text = line[1].strip()
             box = line[0]
             
-            # 短字符(如a,b,c)或纯数字，判定为图内标签，放过它们
             is_label = False
             if len(text) <= 5 and not bool(re.search(r'[\u4e00-\u9fa5]', text)):
                 is_label = True
@@ -75,27 +74,23 @@ def extract_images_with_ocr_mask(img_path, ocr_result, out_dir, pdf_page=None, s
                 x_min, x_max = max(0, min(xs)), min(img.shape[1], max(xs))
                 y_min, y_max = max(0, min(ys)), min(img.shape[0], max(ys))
                 
-                # 【核心】：根据文字高度动态计算擦除范围！字越大，擦得越宽！
                 h_box = y_max - y_min
-                pad_x = int(h_box * 0.6) # 横向扩展 60% 剿灭标点和笔锋
-                pad_y = int(h_box * 0.3) # 纵向扩展 30%
+                pad_x = int(h_box * 0.6) 
+                pad_y = int(h_box * 0.3) 
                 
                 cv2.rectangle(text_erase_mask, 
                               (max(0, x_min - pad_x), max(0, y_min - pad_y)), 
                               (min(img.shape[1], x_max + pad_x), min(img.shape[0], y_max + pad_y)), 
                               255, -1)
 
-    # 用减法将所有正文文字从画面中彻底抹去
     clean_thresh = cv2.subtract(thresh, text_erase_mask)
     del thresh
     del text_erase_mask
 
-    # 3. 形态学搭桥术：缝合虚线和断点 (拯救第 5 题的碱基结构虚线)
     kernel_close = np.ones((12, 12), np.uint8)
     closed = cv2.morphologyEx(clean_thresh, cv2.MORPH_CLOSE, kernel_close)
     del clean_thresh
 
-    # 4. 膨胀加粗实心图形
     kernel_dilate = np.ones((10, 10), np.uint8)
     dilated = cv2.dilate(closed, kernel_dilate, iterations=2)
     del closed
@@ -107,7 +102,6 @@ def extract_images_with_ocr_mask(img_path, ocr_result, out_dir, pdf_page=None, s
     diagram_boxes =[]
     for cnt in contours:
         x, y, w, h = cv2.boundingRect(cnt)
-        # 放宽限制：高度/宽度 > 35，面积 > 1500 就认为是图表
         if w > 35 and h > 35 and (w * h) > 1500:
             if w < img.shape[1] * 0.9 and h < img.shape[0] * 0.9:
                 diagram_boxes.append((x, y, w, h))
@@ -116,14 +110,12 @@ def extract_images_with_ocr_mask(img_path, ocr_result, out_dir, pdf_page=None, s
 
     saved_imgs =[]
     for i, (x, y, w, h) in enumerate(merged_boxes):
-        # 截取时四周带上 15 像素的留白呼吸感
         pad = 15 
         x1, y1 = max(0, x - pad), max(0, y - pad)
         x2, y2 = min(img.shape[1], x + w + pad), min(img.shape[0], y + h + pad)
 
         p = os.path.join(out_dir, f"fig_{int(time.time()*1000)}_{i}.png")
         
-        # 返回原生 PDF 进行 400% 极清定点爆破渲染
         if pdf_page is not None:
             pdf_rect = fitz.Rect(x1/scale_factor, y1/scale_factor, x2/scale_factor, y2/scale_factor)
             pix = pdf_page.get_pixmap(matrix=fitz.Matrix(4.0, 4.0), clip=pdf_rect)
@@ -147,7 +139,6 @@ def post_process_text(text):
     return text
 
 def is_noise(text):
-    # 增加了复习题、练习题等常见无用标题的过滤
     noise_words =['复习与提高', 'A组', 'B组', '高中物理', '必修', '选择性', '扫描全能王', '复习题', '练习题']
     for w in noise_words:
         if w in text: return True
@@ -155,9 +146,8 @@ def is_noise(text):
     return False
 
 def smart_ocr_and_split(img_path, temp_dir, pdf_page=None):
-    engine = RapidOCR()
+    engine = get_ocr_engine()  # 【关键修改】：调用单例引擎，不再每次重新初始化！
     result, _ = engine(img_path)
-    gc.collect() 
     
     cv_images = extract_images_with_ocr_mask(img_path, result, temp_dir, pdf_page=pdf_page)
     
@@ -166,13 +156,12 @@ def smart_ocr_and_split(img_path, temp_dir, pdf_page=None):
     del img_cv
     gc.collect()
 
-    # 安全地赋予图片栏位归属
     for img in cv_images:
         img['col'] = 0 if img['x_center'] < page_center_x else 1
 
     if not result: return[], cv_images
 
-    sorted_lines = []
+    sorted_lines =[]
     for line in result:
         box, text = line[0], line[1]
         cx, cy = (box[0][0] + box[1][0]) / 2, (box[0][1] + box[3][1]) / 2
@@ -208,17 +197,24 @@ def smart_ocr_and_split(img_path, temp_dir, pdf_page=None):
     return questions, cv_images
 
 # ==========================================
-# 核心路由：全局时空坐标系映射引擎 (跨页防丢)
+# 核心路由：全局时空坐标系映射引擎 (带动态进度反馈)
 # ==========================================
-def process_uploaded_files(uploaded_files, temp_dir):
+def process_uploaded_files(uploaded_files, temp_dir, status_text=None, progress_bar=None):
     all_items =[]  
     global_page_idx = 0
+    total_files = len(uploaded_files)
 
-    for file in uploaded_files:
+    for file_idx, file in enumerate(uploaded_files):
+        # 【关键修改】：实时向 UI 汇报进度，防止假死焦虑
+        if status_text:
+            status_text.info(f"⚙️ 正在精细解析第 {file_idx + 1}/{total_files} 份文件：{file.name} ...")
+        if progress_bar:
+            progress_bar.progress(int((file_idx / total_files) * 60))
+
         file_bytes = file.read()
         file_ext = file.name.split('.')[-1].lower()
 
-        if file_ext in ['jpg', 'jpeg', 'png']:
+        if file_ext in['jpg', 'jpeg', 'png']:
             temp_img_path = os.path.join(temp_dir, file.name)
             with open(temp_img_path, "wb") as f: f.write(file_bytes)
             qs, imgs = smart_ocr_and_split(temp_img_path, temp_dir, pdf_page=None)
@@ -230,6 +226,9 @@ def process_uploaded_files(uploaded_files, temp_dir):
         elif file_ext == 'pdf':
             pdf_doc = fitz.open(stream=file_bytes, filetype="pdf")
             for page_num in range(len(pdf_doc)):
+                if status_text:
+                    status_text.info(f"⚙️ 正在精细解析 {file.name} 的第 {page_num + 1}/{len(pdf_doc)} 页 ...")
+                
                 page = pdf_doc.load_page(page_num)
                 pix = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5))
                 temp_img_path = os.path.join(temp_dir, f"pdf_{file.name}_page_{page_num}.jpg")
@@ -256,7 +255,6 @@ def process_uploaded_files(uploaded_files, temp_dir):
             if current_q: all_items.append({'type': 'q', 'page': global_page_idx, 'col': 0, 'y': 0, 'data': current_q})
             global_page_idx += 1
 
-    # 跨页对齐逻辑：按人类阅读顺序排列（页码 -> 栏位 -> Y高度）
     all_items.sort(key=lambda x: (x['page'], x['col'], x['y']))
     
     final_questions =[]
@@ -332,13 +330,19 @@ def render_images_on_slide(slide, img_paths):
         except Exception as e:
             print(f"Error rendering image: {e}")
 
-def make_master_ppt(questions_data):
+def make_master_ppt(questions_data, status_text=None, progress_bar=None):
     prs = Presentation()
     prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
     c_blue, c_orange = RGBColor(0, 112, 192), RGBColor(230, 90, 40)
     global_idx = 1
+    total_q = len(questions_data)
 
-    for q in questions_data:
+    for q_idx, q in enumerate(questions_data):
+        if status_text:
+            status_text.info(f"🎨 正在渲染排版第 {q_idx + 1}/{total_q} 题 PPT页面...")
+        if progress_bar:
+            progress_bar.progress(60 + int((q_idx / total_q) * 35))
+
         matched_imgs = q.get('matched_imgs',[])
         has_imgs = len(matched_imgs) > 0
         text_w = Inches(8.3) if has_imgs else Inches(12.0)
@@ -384,7 +388,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 uploaded_files = st.file_uploader(
-    "📥 拖拽上传题库资料（包含独家生物化学虚线缝合算法！）",
+    "📥 拖拽上传题库资料（已开启全局模型缓存，批量处理不卡顿！）",
     accept_multiple_files=True,
     type=['jpg', 'jpeg', 'png', 'pdf', 'docx']
 )
@@ -402,19 +406,21 @@ if st.button("✨ 一键生成精美 PPT", type="primary", use_container_width=T
 if st.session_state['app_state'] == 'processing':
     progress_bar = st.progress(0)
     status_text = st.empty()
-    status_text.info("⚙️ 启动 OpenCV 深度形态学引擎，正在分离图形与文本...")
+    status_text.info("⚙️ 正在唤醒 OpenCV 深度形态学引擎...")
     
     try:
+        # 预热全局模型，避免第一次提示卡顿
+        get_ocr_engine()
+
         with tempfile.TemporaryDirectory() as temp_dir:
-            final_questions = process_uploaded_files(uploaded_files, temp_dir)
-            progress_bar.progress(60)
+            # 【将 UI 控件传入引擎，实现进度实时播报】
+            final_questions = process_uploaded_files(uploaded_files, temp_dir, status_text, progress_bar)
 
             if not final_questions:
                 status_text.error("❌ 抱歉，未能识别到有效题目，请检查图片或PDF内容。")
                 st.session_state['app_state'] = 'error'
             else:
-                status_text.info(f"✅ 成功提取 {len(final_questions)} 道大题！正在以 400% 极清画质渲染 PPT...")
-                ppt_io = make_master_ppt(final_questions)
+                ppt_io = make_master_ppt(final_questions, status_text, progress_bar)
                 
                 st.session_state['ready_ppt'] = ppt_io.getvalue()
                 st.session_state['app_state'] = 'success'
@@ -433,11 +439,11 @@ if st.session_state['app_state'] == 'processing':
         st.session_state['app_state'] = 'error'
 
 if st.session_state['app_state'] == 'success' and st.session_state['ready_ppt']:
-    st.success("🎉 大功告成！不仅彻底解决了错把文字当图片的Bug，连虚线图也被完美保留了！")
+    st.success("🎉 大功告成！多图批量解析完毕，画质极速渲染成功！请点击下方按钮下载！")
     st.download_button(
         label="⬇️ 点击这里下载生成的 PPT 课件",
         data=st.session_state['ready_ppt'],
-        file_name="核心素养习题精讲(最终完美版).pptx",
+        file_name="核心素养习题精讲(极速批处理版).pptx",
         mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
         use_container_width=True
     )
