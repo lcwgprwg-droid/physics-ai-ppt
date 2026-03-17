@@ -1,29 +1,8 @@
-import sys
 import os
-import subprocess
-
-# =================================================================
-# 🚀 史诗级黑科技：捕捉 OpenCV 报错并进行“活体换头手术”
-# =================================================================
-try:
-    import cv2
-except ImportError:
-    # 加上安全锁，防止无限重启
-    if not os.path.exists('/tmp/cv2_fixed_final.txt'):
-        print("⚠️ 检测到云端环境 OpenCV 冲突，正在进行底层修复...")
-        # 1. 绝对精准：调用当前虚拟环境的 pip 强行卸载所有冲突版本
-        subprocess.call([sys.executable, '-m', 'pip', 'uninstall', '-y', 'opencv-python', 'opencv-python-headless'])
-        # 2. 强行只安装纯净无头版
-        subprocess.call([sys.executable, '-m', 'pip', 'install', 'opencv-python-headless'])
-        # 3. 记录修复状态
-        with open('/tmp/cv2_fixed_final.txt', 'w') as f:
-            f.write('fixed')
-        # 4. 终极大招：强行重启当前 Python 进程，清空内存缓存让新库生效！
-        os.execl(sys.executable, sys.executable, *sys.argv)
-
+import time
+import cv2
 import re
 import math
-import time
 import tempfile
 import io
 import streamlit as st
@@ -38,7 +17,11 @@ from pptx.enum.text import PP_ALIGN, MSO_AUTO_SIZE
 from pptx.oxml.ns import qn
 from PIL import Image, ImageEnhance, ImageDraw
 
-# ... 下面全都是你原来的功能代码（def crop_diagrams 等等），保持绝对不动 ...
+# ==========================================
+# 核心引擎库 (下面是你原来的代码，千万别动)
+# ==========================================
+def crop_diagrams(img_path, out_dir):
+# ... 后面的代码保持原样 ...
 
 
 from rapidocr_onnxruntime import RapidOCR
