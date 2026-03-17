@@ -6,6 +6,7 @@ import numpy as np
 import tempfile
 import io
 import time
+import gc  # 【新增】极限内存回收模块
 import streamlit as st
 import fitz  # PyMuPDF
 import docx  # Python-docx
@@ -23,11 +24,8 @@ from PIL import Image, ImageEnhance, ImageDraw
 # ==========================================
 
 def merge_rects(rects, x_margin=40, y_margin=40):
-    """
-    智能框合并：将距离相近的图片碎片合成一个大图
-    """
     if not rects: return[]
-    boxes = [[r[0], r[1], r[0]+r[2], r[1]+r[3]] for r in rects] # 转换为 x1, y1, x2, y2
+    boxes = [[r[0], r[1], r[0]+r[2], r[1]+r[3]] for r in rects] 
 
     def is_close(b1, b2):
         return not (b1[2] < b2[0] - x_margin or b1[0] > b2[2] + x_margin or 
@@ -50,19 +48,14 @@ def merge_rects(rects, x_margin=40, y_margin=40):
     return [(b[0], b[1], b[2]-b[0], b[3]-b[1]) for b in merged]
 
 def extract_images_with_ocr_mask(img_path, ocr_result, out_dir):
-    """
-    【核心黑科技】：OCR逆向遮罩剥离法
-    把文字全擦除，只留下图表线条，彻底解决“文字段落被当成图片”的致命bug！
-    """
     img = cv2.imread(img_path)
     if img is None: return[]
 
-    # 1. 提取所有边缘（自适应阈值，专治细线条）
+    # 【防 OOM 优化】：处理完中间变量后立刻用 del 删除，释放内存
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 15, 4)
+    mask = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 15, 4)
+    del gray  # 释放内存
 
-    # 2. 擦除文字：将 OCR 识别到的文字区域全部涂黑
-    mask = thresh.copy()
     if ocr_result:
         for line in ocr_result:
             box = line[0]
@@ -70,32 +63,29 @@ def extract_images_with_ocr_mask(img_path, ocr_result, out_dir):
             x_min, x_max = max(0, min(xs)), min(img.shape[1], max(xs))
             y_min, y_max = max(0, min(ys)), min(img.shape[0], max(ys))
             
-            # 向外多扩一点点，确保文字笔画被擦得干干净净
             pad = 4
             cv2.rectangle(mask, (max(0, x_min-pad), max(0, y_min-pad)), 
                           (min(img.shape[1], x_max+pad), min(img.shape[0], y_max+pad)), (0, 0, 0), -1)
 
-    # 3. 线条膨胀：让零碎的电路图或多边形连接起来
     kernel_dilate = np.ones((12, 12), np.uint8)
     dilated = cv2.dilate(mask, kernel_dilate, iterations=2)
+    del mask  # 释放内存
 
-    # 4. 寻找独立图形
     contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    del dilated  # 释放内存
+    gc.collect() # 强制执行一次垃圾回收，防止服务器崩溃
+
     diagram_boxes =[]
     for cnt in contours:
         x, y, w, h = cv2.boundingRect(cnt)
-        # 放宽限制：允许截取长宽均大于30的小图（拯救第5题的碱基图）
-        # 同时过滤掉占满整页的无用边框
         if w > 30 and h > 30 and (w * h) > 1200:
             if w < img.shape[1] * 0.85 and h < img.shape[0] * 0.85:
                 diagram_boxes.append((x, y, w, h))
 
-    # 5. 合并相邻碎图
     merged_boxes = merge_rects(diagram_boxes, x_margin=45, y_margin=45)
 
     saved_imgs =[]
     for i, (x, y, w, h) in enumerate(merged_boxes):
-        # 6. 核心：向外扩展截图区域，把刚刚被擦除的图内标签（a, b, c, d）重新框进来！
         pad_x, pad_y = 25, 25
         x1, y1 = max(0, x - pad_x), max(0, y - pad_y)
         x2, y2 = min(img.shape[1], x + w + pad_x), min(img.shape[0], y + h + pad_y)
@@ -103,16 +93,17 @@ def extract_images_with_ocr_mask(img_path, ocr_result, out_dir):
 
         p = os.path.join(out_dir, f"fig_{int(time.time()*1000)}_{i}.png")
         roi_rgb = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
-        # 增强对比度和锐化，让图表更清晰
         pil_img = ImageEnhance.Sharpness(ImageEnhance.Contrast(Image.fromarray(roi_rgb)).enhance(1.2)).enhance(1.8)
         pil_img.save(p, quality=95)
         saved_imgs.append({"path": p, "x_center": x + w/2, "y_center": y + h/2})
 
+    del img
+    gc.collect()
     return saved_imgs
 
 def post_process_text(text):
     text = re.sub(r'光敏电阻符号是[^\，。]*(?=，|。|$)', '光敏电阻符号是[             ] ', text)
-    text = re.sub(r'电磁开关符号是[^\，。]*(?=，|。|$)', '电磁开关符号是 [             ] ', text)
+    text = re.sub(r'电磁开关符号是[^\，。]*(?=，|。|$)', '电磁开关符号是[             ] ', text)
     return text
 
 def is_noise(text):
@@ -125,15 +116,15 @@ def is_noise(text):
 def smart_ocr_and_split(img_path, temp_dir):
     engine = RapidOCR()
     result, _ = engine(img_path)
+    gc.collect() # 识别完文字后释放模型内存
     
-    # 1. 逆向提取无文本的干净图片
     cv_images = extract_images_with_ocr_mask(img_path, result, temp_dir)
-    
     if not result: return[]
 
-    # 2. 双栏排版分析
     img_cv = cv2.imread(img_path)
     page_center_x = img_cv.shape[1] / 2
+    del img_cv
+    gc.collect()
 
     sorted_lines =[]
     for line in result:
@@ -142,9 +133,8 @@ def smart_ocr_and_split(img_path, temp_dir):
         col_idx = 0 if cx < page_center_x else 1
         sorted_lines.append({"col": col_idx, "y": cy, "box": box, "text": text})
 
-    # 按照先左栏、后右栏，从上到下排序
     sorted_lines.sort(key=lambda item: (item['col'], item['y']))
-    questions, current_q = [], None
+    questions, current_q =[], None
 
     for item in sorted_lines:
         text = item['text'].strip()
@@ -164,32 +154,25 @@ def smart_ocr_and_split(img_path, temp_dir):
 
     if current_q: questions.append(current_q)
     
-    # 为每道题打上“左右栏”标签
     for q in questions:
         q['text'] = post_process_text(q['text'])
         q_cx = (q['x_min'] + q['x_max']) / 2
         q['col'] = 0 if q_cx < page_center_x else 1
 
-    # 3. 终极空间感知图文匹配（解决拉郎配）
     for img in cv_images:
         img_col = 0 if img['x_center'] < page_center_x else 1
-        # 只在图片同侧的那一栏去寻找题目，防止左右栏乱串！
         col_questions =[q for q in questions if q['col'] == img_col]
         
         best_q = None
         img_y = img['y_center']
 
-        # 区间匹配法：图片的 Y 坐标夹在“本题”和“下一题”中间
         for i, q in enumerate(col_questions):
             q_top = q['y_min']
             q_bottom = col_questions[i+1]['y_min'] if i < len(col_questions) - 1 else float('inf')
-            
-            # 上下放宽 60 像素的容错度
             if q_top - 60 <= img_y <= q_bottom + 60:
                 best_q = q
                 break
                 
-        # 兜底匹配：找距离最近的
         if not best_q and col_questions:
             best_q = min(col_questions, key=lambda q: abs(q['y_max'] - img_y))
             
@@ -207,7 +190,7 @@ def process_uploaded_files(uploaded_files, temp_dir):
         file_bytes = file.read()
         file_ext = file.name.split('.')[-1].lower()
 
-        if file_ext in ['jpg', 'jpeg', 'png']:
+        if file_ext in['jpg', 'jpeg', 'png']:
             temp_img_path = os.path.join(temp_dir, file.name)
             with open(temp_img_path, "wb") as f: f.write(file_bytes)
             qs = smart_ocr_and_split(temp_img_path, temp_dir)
@@ -216,10 +199,13 @@ def process_uploaded_files(uploaded_files, temp_dir):
         elif file_ext == 'pdf':
             pdf_doc = fitz.open(stream=file_bytes, filetype="pdf")
             for page_num in range(len(pdf_doc)):
-                # 调整为 1.5 倍缩放，防止免费云服务器内存爆炸崩溃
-                pix = pdf_doc.load_page(page_num).get_pixmap(matrix=fitz.Matrix(1.5, 1.5))
+                # 【防 OOM 优化】：将清晰度矩阵降为 1.2，大幅降低内存占用，画质依然足够
+                pix = pdf_doc.load_page(page_num).get_pixmap(matrix=fitz.Matrix(1.2, 1.2))
                 temp_img_path = os.path.join(temp_dir, f"pdf_{file.name}_page_{page_num}.jpg")
                 pix.save(temp_img_path)
+                pix = None # 释放对象
+                gc.collect()
+                
                 qs = smart_ocr_and_split(temp_img_path, temp_dir)
                 all_questions.extend(qs)
 
@@ -331,10 +317,13 @@ def make_master_ppt(questions_data):
     return ppt_buffer
 
 # ==========================================
-# Streamlit 现代化 Web UI (云端防崩溃固态版)
+# Streamlit 现代化 Web UI (防OOM内存崩溃 + 终极状态机)
 # ==========================================
 st.set_page_config(page_title="AI 物理/生物教研课件工作站", layout="centered", page_icon="⚛️")
 
+# 【核心机制】：工业级 UI 状态机，绝不丢按钮
+if 'app_state' not in st.session_state:
+    st.session_state['app_state'] = 'idle'
 if 'ready_ppt' not in st.session_state:
     st.session_state['ready_ppt'] = None
 
@@ -346,45 +335,62 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 uploaded_files = st.file_uploader(
-    "📥 拖拽上传题库资料（支持双栏排版试卷）",
+    "📥 拖拽上传题库资料（支持双栏排版与高强度图片识别）",
     accept_multiple_files=True,
     type=['jpg', 'jpeg', 'png', 'pdf', 'docx']
 )
 
+# 按钮只负责“修改状态”，不嵌套任何复杂逻辑！
 if st.button("✨ 一键生成精美 PPT", type="primary", use_container_width=True):
     if not uploaded_files:
         st.warning("⚠️ 老师，请先上传文件哦！")
     else:
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        status_text.info("⚙️ 启动 OCR 逆向遮罩提取引擎，深度分析排版中...（大概需要二十秒，请稍候）")
-        
+        st.session_state['app_state'] = 'processing'
+        # 强制网页刷新一次，脱离按钮嵌套
         try:
-            with tempfile.TemporaryDirectory() as temp_dir:
-                final_questions = process_uploaded_files(uploaded_files, temp_dir)
-                progress_bar.progress(60)
+            st.rerun()
+        except AttributeError:
+            st.experimental_rerun()
 
-                if not final_questions:
-                    status_text.error("❌ 抱歉，未能识别到有效题目，请检查图片或PDF内容。")
-                else:
-                    status_text.info(f"✅ 成功提取 {len(final_questions)} 道大题！正在渲染排版...")
-                    ppt_io = make_master_ppt(final_questions)
-                    
-                    st.session_state['ready_ppt'] = ppt_io.getvalue()
-                    
-                    progress_bar.progress(100)
-                    status_text.success("🎉 大功告成！不仅精准剥离了图片，还完美匹配了多图！课件已生成！")
-                    st.balloons()
-                    
-        except Exception as e:
-            progress_bar.empty()
-            status_text.error(f"❌ 运行过程中发生系统崩溃：")
-            import traceback
-            st.code(traceback.format_exc())
+# 后台静默处理区
+if st.session_state['app_state'] == 'processing':
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    status_text.info("⚙️ 启动深度视觉与OCR引擎... (开启内存保护模式，请稍候)")
+    
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            final_questions = process_uploaded_files(uploaded_files, temp_dir)
+            progress_bar.progress(60)
 
-# 最外层独立挂载下载按钮，永不消失！
-if st.session_state['ready_ppt'] is not None:
-    st.markdown("<br>", unsafe_allow_html=True)
+            if not final_questions:
+                status_text.error("❌ 抱歉，未能识别到有效题目，请检查图片或PDF内容。")
+                st.session_state['app_state'] = 'error'
+            else:
+                status_text.info(f"✅ 成功提取 {len(final_questions)} 道大题！正在渲染排版...")
+                ppt_io = make_master_ppt(final_questions)
+                
+                # 保存数据，并标记成功
+                st.session_state['ready_ppt'] = ppt_io.getvalue()
+                st.session_state['app_state'] = 'success'
+                progress_bar.progress(100)
+                
+        # 处理完成后，再次强制网页刷新，让画面直接跳到下载按钮！
+        try:
+            st.rerun()
+        except AttributeError:
+            st.experimental_rerun()
+            
+    except Exception as e:
+        progress_bar.empty()
+        status_text.error(f"❌ 运行过程中发生崩溃：")
+        import traceback
+        st.code(traceback.format_exc())
+        st.session_state['app_state'] = 'error'
+
+# 最外层独立挂载下载区，只要状态是 success，按钮永远存在！
+if st.session_state['app_state'] == 'success' and st.session_state['ready_ppt']:
+    st.success("🎉 大功告成！不仅精准剥离了图片，还完美匹配了多图！课件已生成！")
     st.download_button(
         label="⬇️ 点击这里下载生成的 PPT 课件",
         data=st.session_state['ready_ppt'],
