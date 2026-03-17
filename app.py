@@ -325,15 +325,13 @@ def make_master_ppt(questions_data):
     return ppt_buffer
 
 # ==========================================
-# Streamlit 现代化 Web UI (强化状态保持与防丢版)
+# Streamlit 现代化 Web UI (极限防丢版 + 错误追踪)
 # ==========================================
 st.set_page_config(page_title="AI 物理教研课件生成器", layout="centered", page_icon="⚛️")
 
-# 【核心修复1】：在页面最开始强制初始化状态，死死锁住 PPT 数据
-if 'ppt_data' not in st.session_state:
-    st.session_state['ppt_data'] = None
-if 'is_success' not in st.session_state:
-    st.session_state['is_success'] = False
+# 1. 强制初始化全局缓存变量（名字改回最初始的 ready_ppt，防止新旧代码冲突）
+if 'ready_ppt' not in st.session_state:
+    st.session_state['ready_ppt'] = None
 
 st.markdown("""
 <div style='text-align: center; margin-bottom: 30px;'>
@@ -352,28 +350,44 @@ if st.button("✨ 一键生成精美 PPT", type="primary", use_container_width=T
     if not uploaded_files:
         st.warning("⚠️ 老师，请先上传文件哦！")
     else:
-        # 使用 spinner 代替原来的 empty，更稳定
-        with st.spinner("⚙️ 正在启动 OCR 与机器视觉引擎，疯狂扫题中...（大概需要十几秒，请稍候）"):
+        # 恢复你原来的进度条UI，比 spinner 在云端更稳定
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        status_text.info("⚙️ 正在启动 OCR 与机器视觉引擎，疯狂扫题中...（大概需要十几秒，请稍候）")
+        
+        try:
             with tempfile.TemporaryDirectory() as temp_dir:
+                # 开始处理文件
                 final_questions = process_uploaded_files(uploaded_files, temp_dir)
+                progress_bar.progress(60)
 
                 if not final_questions:
-                    st.error("❌ 抱歉，未能识别到有效题目。")
-                    st.session_state['is_success'] = False
+                    status_text.error("❌ 抱歉，未能识别到有效题目，请检查图片或PDF内容。")
                 else:
+                    status_text.info(f"✅ 成功提取 {len(final_questions)} 道大题！正在渲染排版...")
+                    # 生成 PPT
                     ppt_io = make_master_ppt(final_questions)
                     
-                    # 【核心修复2】：将数据保存到全局 session_state，并打上成功标记
-                    st.session_state['ppt_data'] = ppt_io.getvalue()
-                    st.session_state['is_success'] = True
+                    # 【核心】：保存 PPT 到全局变量
+                    st.session_state['ready_ppt'] = ppt_io.getvalue()
+                    
+                    progress_bar.progress(100)
+                    status_text.success("🎉 大功告成！课件已生成，请点击下方按钮下载！")
+                    st.balloons()
+                    
+        except Exception as e:
+            # 【排错神器】：如果代码崩溃，强制把错误打印在网页上，而不是悄悄消失！
+            progress_bar.empty()
+            status_text.error(f"❌ 运行过程中发生崩溃错误，请把下面的代码截图发给我排查：")
+            import traceback
+            st.code(traceback.format_exc())
 
-# 【核心修复3】：将下载按钮独立到最外层
-# 只要成功标记为 True，不管页面怎么刷新，成功提示和下载按钮永远都在！
-if st.session_state.get('is_success') and st.session_state.get('ppt_data'):
-    st.success("🎉 大功告成！课件已生成，请点击下方按钮下载！")
+# 2. 将下载按钮完全独立放在最外层（请注意这里不要有任何缩进，必须靠着最左边）
+if st.session_state['ready_ppt'] is not None:
+    st.markdown("<br>", unsafe_allow_html=True)
     st.download_button(
         label="⬇️ 点击这里下载生成的 PPT 课件",
-        data=st.session_state['ppt_data'],
+        data=st.session_state['ready_ppt'],
         file_name="核心素养习题精讲(AI生成版).pptx",
         mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
         use_container_width=True
