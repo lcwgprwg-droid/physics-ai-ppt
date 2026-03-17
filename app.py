@@ -19,94 +19,95 @@ from pptx.oxml.ns import qn
 from PIL import Image, ImageEnhance, ImageDraw
 
 # ==========================================
-# 核心引擎库 (视觉 + OCR)
+# 核心引擎库 (视觉 + OCR 逆向遮罩算法)
 # ==========================================
 
-def merge_rects(rects, x_margin=60, y_margin=60):
+def merge_rects(rects, x_margin=40, y_margin=40):
     """
-    【新增算法】：边界框合并算法 (专为物理实验题设计)
-    解决电路图、实物图被切成碎片的问题。如果两个框距离足够近，就合并成一个大框。
+    智能框合并：将距离相近的图片碎片合成一个大图
     """
     if not rects: return[]
-    # 将 (x, y, w, h) 转换为 (x1, y1, x2, y2)
-    boxes = [[r[0], r[1], r[0]+r[2], r[1]+r[3]] for r in rects]
-    
-    merged = True
-    while merged:
-        merged = False
-        new_boxes =[]
-        while boxes:
-            box = boxes.pop(0)
-            matched = False
-            for i, other in enumerate(new_boxes):
-                # 判断两个框是否靠近 (考虑 margin)
-                if not (box[2] < other[0] - x_margin or 
-                        box[0] > other[2] + x_margin or 
-                        box[3] < other[1] - y_margin or 
-                        box[1] > other[3] + y_margin):
-                    # 合并框
-                    new_boxes[i] = [
-                        min(box[0], other[0]), min(box[1], other[1]),
-                        max(box[2], other[2]), max(box[3], other[3])
-                    ]
-                    matched = True
-                    merged = True
-                    break
-            if not matched:
-                new_boxes.append(box)
-        boxes = new_boxes
-        
-    # 转回 (x, y, w, h)
-    return [(b[0], b[1], b[2]-b[0], b[3]-b[1]) for b in boxes]
+    boxes = [[r[0], r[1], r[0]+r[2], r[1]+r[3]] for r in rects] # 转换为 x1, y1, x2, y2
 
-def crop_diagrams(img_path, out_dir):
+    def is_close(b1, b2):
+        return not (b1[2] < b2[0] - x_margin or b1[0] > b2[2] + x_margin or 
+                    b1[3] < b2[1] - y_margin or b1[1] > b2[3] + y_margin)
+
+    merged =[]
+    while boxes:
+        box = boxes.pop(0)
+        has_merged = True
+        while has_merged:
+            has_merged = False
+            for i in range(len(boxes)-1, -1, -1):
+                other = boxes[i]
+                if is_close(box, other):
+                    box = [min(box[0], other[0]), min(box[1], other[1]),
+                           max(box[2], other[2]), max(box[3], other[3])]
+                    boxes.pop(i)
+                    has_merged = True
+        merged.append(box)
+    return [(b[0], b[1], b[2]-b[0], b[3]-b[1]) for b in merged]
+
+def extract_images_with_ocr_mask(img_path, ocr_result, out_dir):
     """
-    【优化算法】：增强的机器视觉，专攻坐标纸、电路图、多图片提取
+    【核心黑科技】：OCR逆向遮罩剥离法
+    把文字全擦除，只留下图表线条，彻底解决“文字段落被当成图片”的致命bug！
     """
     img = cv2.imread(img_path)
     if img is None: return[]
-    
-    # 1. 边缘检测 + 形态学 (比单纯二值化更能抓住浅色网格和细实线)
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    edges = cv2.Canny(blurred, 30, 150) # Canny 边缘检测提取线条
-    
-    # 2. 膨胀线条，使物理组件（电阻、电源、导线）连成一体
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
-    dilated = cv2.dilate(edges, kernel, iterations=3)
-    
-    contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    raw_rects =[]
+    # 1. 提取所有边缘（自适应阈值，专治细线条）
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 15, 4)
+
+    # 2. 擦除文字：将 OCR 识别到的文字区域全部涂黑
+    mask = thresh.copy()
+    if ocr_result:
+        for line in ocr_result:
+            box = line[0]
+            xs, ys = [int(pt[0]) for pt in box], [int(pt[1]) for pt in box]
+            x_min, x_max = max(0, min(xs)), min(img.shape[1], max(xs))
+            y_min, y_max = max(0, min(ys)), min(img.shape[0], max(ys))
+            
+            # 向外多扩一点点，确保文字笔画被擦得干干净净
+            pad = 4
+            cv2.rectangle(mask, (max(0, x_min-pad), max(0, y_min-pad)), 
+                          (min(img.shape[1], x_max+pad), min(img.shape[0], y_max+pad)), (0, 0, 0), -1)
+
+    # 3. 线条膨胀：让零碎的电路图或多边形连接起来
+    kernel_dilate = np.ones((12, 12), np.uint8)
+    dilated = cv2.dilate(mask, kernel_dilate, iterations=2)
+
+    # 4. 寻找独立图形
+    contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    diagram_boxes =[]
     for cnt in contours:
         x, y, w, h = cv2.boundingRect(cnt)
-        # 放宽限制，先收集所有中等以上的碎片
-        if w > 30 and h > 30 and (w * h) > 2000:
-            raw_rects.append((x, y, w, h))
-            
-    # 3. 核心：合并相邻的碎片 (合并电路图组件、坐标轴与数据点)
-    merged_rects = merge_rects(raw_rects, x_margin=80, y_margin=80)
+        # 放宽限制：允许截取长宽均大于30的小图（拯救第5题的碱基图）
+        # 同时过滤掉占满整页的无用边框
+        if w > 30 and h > 30 and (w * h) > 1200:
+            if w < img.shape[1] * 0.85 and h < img.shape[0] * 0.85:
+                diagram_boxes.append((x, y, w, h))
 
-    diagrams =[]
-    for (x, y, w, h) in merged_rects:
-        # 二次过滤：过滤掉过于细长的干扰线和太小的点
-        if w > 50 and h > 50 and (w * h) > 10000 and 0.1 < (w / float(h)) < 10.0:
-            y1, y2 = max(0, y - 15), min(img.shape[0], y + h + 15)
-            x1, x2 = max(0, x - 15), min(img.shape[1], x + w + 15)
-            diagrams.append({"img": img[y1:y2, x1:x2], "x_center": x + w/2, "y_center": y + h/2})
-
-    # 按 Y 坐标从上到下排序，保证多图时顺序正确
-    diagrams.sort(key=lambda d: d['y_center'])
+    # 5. 合并相邻碎图
+    merged_boxes = merge_rects(diagram_boxes, x_margin=45, y_margin=45)
 
     saved_imgs =[]
-    for i, d in enumerate(diagrams):
+    for i, (x, y, w, h) in enumerate(merged_boxes):
+        # 6. 核心：向外扩展截图区域，把刚刚被擦除的图内标签（a, b, c, d）重新框进来！
+        pad_x, pad_y = 25, 25
+        x1, y1 = max(0, x - pad_x), max(0, y - pad_y)
+        x2, y2 = min(img.shape[1], x + w + pad_x), min(img.shape[0], y + h + pad_y)
+        roi = img[y1:y2, x1:x2]
+
         p = os.path.join(out_dir, f"fig_{int(time.time()*1000)}_{i}.png")
-        roi_rgb = cv2.cvtColor(d["img"], cv2.COLOR_BGR2RGB)
-        # 增强对比度和锐度，让截出来的物理图更清晰
-        pil_img = ImageEnhance.Sharpness(ImageEnhance.Contrast(Image.fromarray(roi_rgb)).enhance(1.5)).enhance(2.0)
+        roi_rgb = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
+        # 增强对比度和锐化，让图表更清晰
+        pil_img = ImageEnhance.Sharpness(ImageEnhance.Contrast(Image.fromarray(roi_rgb)).enhance(1.2)).enhance(1.8)
         pil_img.save(p, quality=95)
-        saved_imgs.append({"path": p, "x_center": d["x_center"], "y_center": d["y_center"]})
-        
+        saved_imgs.append({"path": p, "x_center": x + w/2, "y_center": y + h/2})
+
     return saved_imgs
 
 def post_process_text(text):
@@ -121,13 +122,18 @@ def is_noise(text):
     if re.match(r'^\s*\d+\s*$', text): return True
     return False
 
-def smart_ocr_and_split(img_path, cv_images):
+def smart_ocr_and_split(img_path, temp_dir):
     engine = RapidOCR()
     result, _ = engine(img_path)
+    
+    # 1. 逆向提取无文本的干净图片
+    cv_images = extract_images_with_ocr_mask(img_path, result, temp_dir)
+    
     if not result: return[]
 
-    max_x = max([line[0][1][0] for line in result])
-    page_center_x = max_x / 2
+    # 2. 双栏排版分析
+    img_cv = cv2.imread(img_path)
+    page_center_x = img_cv.shape[1] / 2
 
     sorted_lines =[]
     for line in result:
@@ -136,8 +142,9 @@ def smart_ocr_and_split(img_path, cv_images):
         col_idx = 0 if cx < page_center_x else 1
         sorted_lines.append({"col": col_idx, "y": cy, "box": box, "text": text})
 
+    # 按照先左栏、后右栏，从上到下排序
     sorted_lines.sort(key=lambda item: (item['col'], item['y']))
-    questions, current_q =[], None
+    questions, current_q = [], None
 
     for item in sorted_lines:
         text = item['text'].strip()
@@ -156,21 +163,35 @@ def smart_ocr_and_split(img_path, cv_images):
             current_q['y_min'], current_q['y_max'] = min(current_q['y_min'], y_top), max(current_q['y_max'], y_bottom)
 
     if current_q: questions.append(current_q)
-    for q in questions: q['text'] = post_process_text(q['text'])
+    
+    # 为每道题打上“左右栏”标签
+    for q in questions:
+        q['text'] = post_process_text(q['text'])
+        q_cx = (q['x_min'] + q['x_max']) / 2
+        q['col'] = 0 if q_cx < page_center_x else 1
 
-    # 【优化算法】：基于垂直区间的图文匹配，精准绑定多图
+    # 3. 终极空间感知图文匹配（解决拉郎配）
     for img in cv_images:
+        img_col = 0 if img['x_center'] < page_center_x else 1
+        # 只在图片同侧的那一栏去寻找题目，防止左右栏乱串！
+        col_questions =[q for q in questions if q['col'] == img_col]
+        
         best_q = None
-        # 寻找图片位于其正下方的题目（物理题通常是先文字后图片）
-        # 倒序遍历，找到第一个起始 Y 坐标在图片中心上方的题目
-        for q in reversed(questions):
-            if q['y_min'] < img['y_center'] + 100: # 100是容差
+        img_y = img['y_center']
+
+        # 区间匹配法：图片的 Y 坐标夹在“本题”和“下一题”中间
+        for i, q in enumerate(col_questions):
+            q_top = q['y_min']
+            q_bottom = col_questions[i+1]['y_min'] if i < len(col_questions) - 1 else float('inf')
+            
+            # 上下放宽 60 像素的容错度
+            if q_top - 60 <= img_y <= q_bottom + 60:
                 best_q = q
                 break
-        
-        # 兜底匹配：如果没找到，找距离最近的
-        if not best_q and questions:
-            best_q = min(questions, key=lambda q: abs((q['y_min']+q['y_max'])/2 - img['y_center']))
+                
+        # 兜底匹配：找距离最近的
+        if not best_q and col_questions:
+            best_q = min(col_questions, key=lambda q: abs(q['y_max'] - img_y))
             
         if best_q:
             best_q['matched_imgs'].append(img['path'])
@@ -178,7 +199,7 @@ def smart_ocr_and_split(img_path, cv_images):
     return questions
 
 # ==========================================
-# 文档路由 (多图 / PDF / DOCX)
+# 文档路由引擎
 # ==========================================
 def process_uploaded_files(uploaded_files, temp_dir):
     all_questions =[]
@@ -189,16 +210,17 @@ def process_uploaded_files(uploaded_files, temp_dir):
         if file_ext in ['jpg', 'jpeg', 'png']:
             temp_img_path = os.path.join(temp_dir, file.name)
             with open(temp_img_path, "wb") as f: f.write(file_bytes)
-            qs = smart_ocr_and_split(temp_img_path, crop_diagrams(temp_img_path, temp_dir))
+            qs = smart_ocr_and_split(temp_img_path, temp_dir)
             all_questions.extend(qs)
 
         elif file_ext == 'pdf':
             pdf_doc = fitz.open(stream=file_bytes, filetype="pdf")
             for page_num in range(len(pdf_doc)):
+                # 调整为 1.5 倍缩放，防止免费云服务器内存爆炸崩溃
                 pix = pdf_doc.load_page(page_num).get_pixmap(matrix=fitz.Matrix(1.5, 1.5))
                 temp_img_path = os.path.join(temp_dir, f"pdf_{file.name}_page_{page_num}.jpg")
                 pix.save(temp_img_path)
-                qs = smart_ocr_and_split(temp_img_path, crop_diagrams(temp_img_path, temp_dir))
+                qs = smart_ocr_and_split(temp_img_path, temp_dir)
                 all_questions.extend(qs)
 
         elif file_ext == 'docx':
@@ -217,7 +239,7 @@ def process_uploaded_files(uploaded_files, temp_dir):
     return all_questions
 
 # ==========================================
-# PPT 渲染排版引擎 (修复多图片溢出问题)
+# PPT 渲染排版引擎 (智能多图排版布局)
 # ==========================================
 def set_font(run, font_name='微软雅黑'):
     run.font.name = font_name
@@ -254,41 +276,25 @@ def add_badge_card(slide, x, y, w, h, badge_text, badge_color, content, font_siz
         p.text = line; p.font.size = Pt(font_size); p.font.color.rgb = RGBColor(30, 30, 30); p.line_spacing = line_spacing; set_font(p.runs[0])
 
 def render_images_on_slide(slide, img_paths):
-    """
-    【新增算法】：PPT多图自适应排版引擎
-    如果是1张图就放大；如果是2-4张图会自动缩放并堆叠，避免超出PPT底边。
-    """
     if not img_paths: return
     num_imgs = len(img_paths)
-    
-    # 动态设定初始Y坐标和最大可用高度
     start_y = 1.2
-    max_total_height = 6.0  # PPT 右侧可用于放图片的总高度(英寸)
     
-    # 动态设定图片宽度
-    if num_imgs == 1:
-        target_width = 4.0
-    elif num_imgs == 2:
-        target_width = 3.8
-    else:
-        target_width = 3.0 # 图片多时缩小宽度
+    target_width = 4.0 if num_imgs == 1 else (3.8 if num_imgs == 2 else 3.0)
 
     for img_path in img_paths:
         try:
-            # 插入图片获取其长宽比
             pic = slide.shapes.add_picture(img_path, Inches(8.9), Inches(start_y), width=Inches(target_width))
-            # 将 EMU 单位转换为英寸
             pic_height_in = pic.height / 914400.0 
             
-            # 如果图片排版已经超出了PPT的底部边缘，强制缩小图片高度
             if start_y + pic_height_in > 7.3:
                 pic.height = int((7.3 - start_y) * 914400)
                 pic.width = int(pic.height * (Image.open(img_path).width / Image.open(img_path).height))
                 pic_height_in = pic.height / 914400.0
                 
-            start_y += pic_height_in + 0.15 # 下一张图片的起始Y = 当前图片底部 + 0.15英寸的间距
+            start_y += pic_height_in + 0.15 
         except Exception as e:
-            print(f"Error rendering image {img_path}: {e}")
+            print(f"Error rendering image: {e}")
 
 def make_master_ppt(questions_data):
     prs = Presentation()
@@ -306,11 +312,11 @@ def make_master_ppt(questions_data):
         if len(q['text']) > 120:
             slide1 = create_base_slide(prs, f"习题精讲 - 第 {global_idx} 题")
             add_badge_card(slide1, Inches(0.4), Inches(1.2), text_w, Inches(5.8), "原题呈现", c_blue, q['text'], q_font, q_space)
-            render_images_on_slide(slide1, matched_imgs) # 调用自适应排版
+            render_images_on_slide(slide1, matched_imgs)
             
             slide2 = create_base_slide(prs, f"习题精讲 - 第 {global_idx} 题 (解析)")
             add_badge_card(slide2, Inches(0.4), Inches(1.2), text_w, Inches(5.8), "深度解析", c_orange, "待补充解析过程...", 18, 1.4)
-            render_images_on_slide(slide2, matched_imgs) # 解析页也带上题图
+            render_images_on_slide(slide2, matched_imgs)
         else:
             slide = create_base_slide(prs, f"习题精讲 - 第 {global_idx} 题")
             add_badge_card(slide, Inches(0.4), Inches(1.2), text_w, Inches(4.0), "原题呈现", c_blue, q['text'], q_font, q_space)
@@ -325,23 +331,22 @@ def make_master_ppt(questions_data):
     return ppt_buffer
 
 # ==========================================
-# Streamlit 现代化 Web UI (极限防丢版 + 错误追踪)
+# Streamlit 现代化 Web UI (云端防崩溃固态版)
 # ==========================================
-st.set_page_config(page_title="AI 物理教研课件生成器", layout="centered", page_icon="⚛️")
+st.set_page_config(page_title="AI 物理/生物教研课件工作站", layout="centered", page_icon="⚛️")
 
-# 1. 强制初始化全局缓存变量（名字改回最初始的 ready_ppt，防止新旧代码冲突）
 if 'ready_ppt' not in st.session_state:
     st.session_state['ready_ppt'] = None
 
 st.markdown("""
 <div style='text-align: center; margin-bottom: 30px;'>
-    <h1 style='color: #0070C0;'>🚀 AI 物理教研全自动工作站</h1>
+    <h1 style='color: #0070C0;'>🚀 AI 教研全自动工作站</h1>
     <p style='color: #666;'>支持同时上传多张 <b>教辅照片 / PDF / Word文档</b>，一键生成带有视觉配图与自动分页的巅峰排版 PPT。</p>
 </div>
 """, unsafe_allow_html=True)
 
 uploaded_files = st.file_uploader(
-    "📥 拖拽上传题库资料（可多选）",
+    "📥 拖拽上传题库资料（支持双栏排版试卷）",
     accept_multiple_files=True,
     type=['jpg', 'jpeg', 'png', 'pdf', 'docx']
 )
@@ -350,14 +355,12 @@ if st.button("✨ 一键生成精美 PPT", type="primary", use_container_width=T
     if not uploaded_files:
         st.warning("⚠️ 老师，请先上传文件哦！")
     else:
-        # 恢复你原来的进度条UI，比 spinner 在云端更稳定
         progress_bar = st.progress(0)
         status_text = st.empty()
-        status_text.info("⚙️ 正在启动 OCR 与机器视觉引擎，疯狂扫题中...（大概需要十几秒，请稍候）")
+        status_text.info("⚙️ 启动 OCR 逆向遮罩提取引擎，深度分析排版中...（大概需要二十秒，请稍候）")
         
         try:
             with tempfile.TemporaryDirectory() as temp_dir:
-                # 开始处理文件
                 final_questions = process_uploaded_files(uploaded_files, temp_dir)
                 progress_bar.progress(60)
 
@@ -365,24 +368,21 @@ if st.button("✨ 一键生成精美 PPT", type="primary", use_container_width=T
                     status_text.error("❌ 抱歉，未能识别到有效题目，请检查图片或PDF内容。")
                 else:
                     status_text.info(f"✅ 成功提取 {len(final_questions)} 道大题！正在渲染排版...")
-                    # 生成 PPT
                     ppt_io = make_master_ppt(final_questions)
                     
-                    # 【核心】：保存 PPT 到全局变量
                     st.session_state['ready_ppt'] = ppt_io.getvalue()
                     
                     progress_bar.progress(100)
-                    status_text.success("🎉 大功告成！课件已生成，请点击下方按钮下载！")
+                    status_text.success("🎉 大功告成！不仅精准剥离了图片，还完美匹配了多图！课件已生成！")
                     st.balloons()
                     
         except Exception as e:
-            # 【排错神器】：如果代码崩溃，强制把错误打印在网页上，而不是悄悄消失！
             progress_bar.empty()
-            status_text.error(f"❌ 运行过程中发生崩溃错误，请把下面的代码截图发给我排查：")
+            status_text.error(f"❌ 运行过程中发生系统崩溃：")
             import traceback
             st.code(traceback.format_exc())
 
-# 2. 将下载按钮完全独立放在最外层（请注意这里不要有任何缩进，必须靠着最左边）
+# 最外层独立挂载下载按钮，永不消失！
 if st.session_state['ready_ppt'] is not None:
     st.markdown("<br>", unsafe_allow_html=True)
     st.download_button(
