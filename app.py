@@ -1,13 +1,27 @@
 import os
 import time
-import re
+
+# =================================================================
+# 🚀 终极防崩溃黑科技：强制云端服务器使用无头版 OpenCV
+# =================================================================
+if not os.path.exists('/tmp/cv2_fixed.txt'):
+    os.system('pip uninstall -y opencv-python')
+    os.system('pip uninstall -y opencv-python-headless')
+    os.system('pip install opencv-python-headless')
+    os.system('touch /tmp/cv2_fixed.txt')
+
 import cv2
+import re
 import math
 import tempfile
 import io
 import streamlit as st
 import fitz  # PyMuPDF，用于处理 PDF
 import docx  # 用于处理 Word
+
+# ... 下面全都是你原来的代码，保持不动 ...
+
+
 from rapidocr_onnxruntime import RapidOCR
 from pptx import Presentation
 from pptx.util import Inches, Pt
