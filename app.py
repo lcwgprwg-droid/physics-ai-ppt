@@ -1,31 +1,13 @@
-import sys
-import subprocess
-import importlib
-
-# =================================================================
-# 🚀 史诗级防崩溃黑科技：在内存中静默替换 OpenCV 无头版
-# =================================================================
-try:
-    import cv2
-except ImportError:
-    print("⚙️ 检测到云端 OpenCV 冲突，正在静默修复...")
-    subprocess.check_call([sys.executable, "-m", "pip", "uninstall", "-y", "opencv-python", "opencv-python-headless"])
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "opencv-python-headless"])
-    importlib.invalidate_caches()
-    if 'cv2' in sys.modules:
-        del sys.modules['cv2']
-    import cv2
-
-# --- 其他常规依赖库 ---
 import os
 import re
+import cv2
 import math
 import tempfile
 import io
 import time
 import streamlit as st
-import fitz  # PyMuPDF，用于处理 PDF
-import docx  # 用于处理 Word
+import fitz  # PyMuPDF
+import docx  # Python-docx
 from rapidocr_onnxruntime import RapidOCR
 from pptx import Presentation
 from pptx.util import Inches, Pt
@@ -256,41 +238,41 @@ st.set_page_config(page_title="AI 物理教研课件生成器", layout="centered
 
 st.markdown("""
 <div style='text-align: center; margin-bottom: 30px;'>
-    <h1 style='color: #0070C0;'>🚀 AI 物理教研课件全自动工作站</h1>
-    <p style='color: #666;'>支持同时上传多张 <b>教辅照片 / PDF / Word文档</b>，一键生成带有视觉配图与自动分页的巅峰排版 PPT。</p>
+    <h1 style='color: #0070C0;'>🚀 AI 物理教研全自动工作站</h1>
+    <p style='color: #666;'>支持上传 <b>图片 / PDF / Word</b>，一键生成巅峰学术排版 PPT。</p>
 </div>
 """, unsafe_allow_html=True)
 
 uploaded_files = st.file_uploader(
-    "📥 拖拽或点击上传你的题库资料（支持 .jpg, .png, .pdf, .docx，可多选）",
+    "📥 拖拽上传题库资料（可多选）",
     accept_multiple_files=True,
     type=['jpg', 'jpeg', 'png', 'pdf', 'docx']
 )
 
 if st.button("✨ 一键生成精美 PPT", type="primary", use_container_width=True):
     if not uploaded_files:
-        st.warning("⚠️ 老师，请先上传至少一份文件哦！")
+        st.warning("⚠️ 请先上传文件哦！")
     else:
         progress_bar = st.progress(0)
         status_text = st.empty()
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            status_text.info("⚙️ 正在启动 OCR 与机器视觉引擎，疯狂扫题中...")
+            status_text.info("⚙️ 正在启动 OCR 与机器视觉引擎...")
             final_questions = process_uploaded_files(uploaded_files, temp_dir)
             progress_bar.progress(60)
 
             if not final_questions:
-                st.error("❌ 抱歉，未能从上传的文件中识别到任何有效的题目结构。")
+                st.error("❌ 未识别到有效题目。")
             else:
-                status_text.info(f"✅ 成功提取了 {len(final_questions)} 道大题！正在渲染排版...")
+                status_text.info(f"✅ 成功提取 {len(final_questions)} 道题！正在渲染排版...")
                 ppt_io = make_master_ppt(final_questions)
                 progress_bar.progress(100)
-                status_text.success("🎉 大功告成！课件已成功生成！")
+                status_text.success("🎉 大功告成！课件已生成！")
 
                 st.download_button(
                     label="⬇️ 下载生成的 PPT 课件",
                     data=ppt_io,
-                    file_name="核心素养习题精讲(AI生成版).pptx",
+                    file_name="习题精讲(AI生成版).pptx",
                     mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
                     use_container_width=True
                 )
