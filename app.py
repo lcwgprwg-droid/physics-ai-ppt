@@ -2,6 +2,7 @@ import os
 import re
 import cv2
 import math
+import numpy as np
 import tempfile
 import io
 import time
@@ -20,32 +21,92 @@ from PIL import Image, ImageEnhance, ImageDraw
 # ==========================================
 # 核心引擎库 (视觉 + OCR)
 # ==========================================
+
+def merge_rects(rects, x_margin=60, y_margin=60):
+    """
+    【新增算法】：边界框合并算法 (专为物理实验题设计)
+    解决电路图、实物图被切成碎片的问题。如果两个框距离足够近，就合并成一个大框。
+    """
+    if not rects: return[]
+    # 将 (x, y, w, h) 转换为 (x1, y1, x2, y2)
+    boxes = [[r[0], r[1], r[0]+r[2], r[1]+r[3]] for r in rects]
+    
+    merged = True
+    while merged:
+        merged = False
+        new_boxes =[]
+        while boxes:
+            box = boxes.pop(0)
+            matched = False
+            for i, other in enumerate(new_boxes):
+                # 判断两个框是否靠近 (考虑 margin)
+                if not (box[2] < other[0] - x_margin or 
+                        box[0] > other[2] + x_margin or 
+                        box[3] < other[1] - y_margin or 
+                        box[1] > other[3] + y_margin):
+                    # 合并框
+                    new_boxes[i] = [
+                        min(box[0], other[0]), min(box[1], other[1]),
+                        max(box[2], other[2]), max(box[3], other[3])
+                    ]
+                    matched = True
+                    merged = True
+                    break
+            if not matched:
+                new_boxes.append(box)
+        boxes = new_boxes
+        
+    # 转回 (x, y, w, h)
+    return [(b[0], b[1], b[2]-b[0], b[3]-b[1]) for b in boxes]
+
 def crop_diagrams(img_path, out_dir):
+    """
+    【优化算法】：增强的机器视觉，专攻坐标纸、电路图、多图片提取
+    """
     img = cv2.imread(img_path)
     if img is None: return[]
+    
+    # 1. 边缘检测 + 形态学 (比单纯二值化更能抓住浅色网格和细实线)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    _, thresh = cv2.threshold(gray, 240, 255, cv2.THRESH_BINARY_INV)
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (20, 6))
-    dilated = cv2.dilate(thresh, kernel, iterations=2)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    edges = cv2.Canny(blurred, 30, 150) # Canny 边缘检测提取线条
+    
+    # 2. 膨胀线条，使物理组件（电阻、电源、导线）连成一体
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
+    dilated = cv2.dilate(edges, kernel, iterations=3)
+    
     contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    diagrams =[]
+    raw_rects =[]
     for cnt in contours:
         x, y, w, h = cv2.boundingRect(cnt)
-        if h > 50 and w > 50 and (w * h) > 8000 and 0.1 < (w / float(h)) < 8.0:
+        # 放宽限制，先收集所有中等以上的碎片
+        if w > 30 and h > 30 and (w * h) > 2000:
+            raw_rects.append((x, y, w, h))
+            
+    # 3. 核心：合并相邻的碎片 (合并电路图组件、坐标轴与数据点)
+    merged_rects = merge_rects(raw_rects, x_margin=80, y_margin=80)
+
+    diagrams =[]
+    for (x, y, w, h) in merged_rects:
+        # 二次过滤：过滤掉过于细长的干扰线和太小的点
+        if w > 50 and h > 50 and (w * h) > 10000 and 0.1 < (w / float(h)) < 10.0:
             y1, y2 = max(0, y - 15), min(img.shape[0], y + h + 15)
             x1, x2 = max(0, x - 15), min(img.shape[1], x + w + 15)
             diagrams.append({"img": img[y1:y2, x1:x2], "x_center": x + w/2, "y_center": y + h/2})
+
+    # 按 Y 坐标从上到下排序，保证多图时顺序正确
+    diagrams.sort(key=lambda d: d['y_center'])
 
     saved_imgs =[]
     for i, d in enumerate(diagrams):
         p = os.path.join(out_dir, f"fig_{int(time.time()*1000)}_{i}.png")
         roi_rgb = cv2.cvtColor(d["img"], cv2.COLOR_BGR2RGB)
-        mask_bg = (roi_rgb[:,:,0] > 215) & (roi_rgb[:,:,1] > 215) & (roi_rgb[:,:,2] > 215)
-        roi_rgb[mask_bg] = [255, 255, 255]
-        pil_img = ImageEnhance.Sharpness(ImageEnhance.Contrast(Image.fromarray(roi_rgb)).enhance(1.2)).enhance(1.8)
+        # 增强对比度和锐度，让截出来的物理图更清晰
+        pil_img = ImageEnhance.Sharpness(ImageEnhance.Contrast(Image.fromarray(roi_rgb)).enhance(1.5)).enhance(2.0)
         pil_img.save(p, quality=95)
         saved_imgs.append({"path": p, "x_center": d["x_center"], "y_center": d["y_center"]})
+        
     return saved_imgs
 
 def post_process_text(text):
@@ -63,7 +124,7 @@ def is_noise(text):
 def smart_ocr_and_split(img_path, cv_images):
     engine = RapidOCR()
     result, _ = engine(img_path)
-    if not result: return []
+    if not result: return[]
 
     max_x = max([line[0][1][0] for line in result])
     page_center_x = max_x / 2
@@ -97,16 +158,21 @@ def smart_ocr_and_split(img_path, cv_images):
     if current_q: questions.append(current_q)
     for q in questions: q['text'] = post_process_text(q['text'])
 
+    # 【优化算法】：基于垂直区间的图文匹配，精准绑定多图
     for img in cv_images:
         best_q = None
-        min_dist = float('inf')
-        for q in questions:
-            q_cx, q_cy = (q['x_min'] + q['x_max']) / 2, (q['y_min'] + q['y_max']) / 2
-            dist = math.sqrt((img['x_center'] - q_cx)**2 + (img['y_center'] - q_cy)**2)
-            if dist < min_dist:
-                min_dist = dist
+        # 寻找图片位于其正下方的题目（物理题通常是先文字后图片）
+        # 倒序遍历，找到第一个起始 Y 坐标在图片中心上方的题目
+        for q in reversed(questions):
+            if q['y_min'] < img['y_center'] + 100: # 100是容差
                 best_q = q
-        if best_q and min_dist < 600:
+                break
+        
+        # 兜底匹配：如果没找到，找距离最近的
+        if not best_q and questions:
+            best_q = min(questions, key=lambda q: abs((q['y_min']+q['y_max'])/2 - img['y_center']))
+            
+        if best_q:
             best_q['matched_imgs'].append(img['path'])
 
     return questions
@@ -120,7 +186,7 @@ def process_uploaded_files(uploaded_files, temp_dir):
         file_bytes = file.read()
         file_ext = file.name.split('.')[-1].lower()
 
-        if file_ext in['jpg', 'jpeg', 'png']:
+        if file_ext in ['jpg', 'jpeg', 'png']:
             temp_img_path = os.path.join(temp_dir, file.name)
             with open(temp_img_path, "wb") as f: f.write(file_bytes)
             qs = smart_ocr_and_split(temp_img_path, crop_diagrams(temp_img_path, temp_dir))
@@ -151,7 +217,7 @@ def process_uploaded_files(uploaded_files, temp_dir):
     return all_questions
 
 # ==========================================
-# PPT 渲染排版引擎
+# PPT 渲染排版引擎 (修复多图片溢出问题)
 # ==========================================
 def set_font(run, font_name='微软雅黑'):
     run.font.name = font_name
@@ -187,6 +253,43 @@ def add_badge_card(slide, x, y, w, h, badge_text, badge_color, content, font_siz
         p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
         p.text = line; p.font.size = Pt(font_size); p.font.color.rgb = RGBColor(30, 30, 30); p.line_spacing = line_spacing; set_font(p.runs[0])
 
+def render_images_on_slide(slide, img_paths):
+    """
+    【新增算法】：PPT多图自适应排版引擎
+    如果是1张图就放大；如果是2-4张图会自动缩放并堆叠，避免超出PPT底边。
+    """
+    if not img_paths: return
+    num_imgs = len(img_paths)
+    
+    # 动态设定初始Y坐标和最大可用高度
+    start_y = 1.2
+    max_total_height = 6.0  # PPT 右侧可用于放图片的总高度(英寸)
+    
+    # 动态设定图片宽度
+    if num_imgs == 1:
+        target_width = 4.0
+    elif num_imgs == 2:
+        target_width = 3.8
+    else:
+        target_width = 3.0 # 图片多时缩小宽度
+
+    for img_path in img_paths:
+        try:
+            # 插入图片获取其长宽比
+            pic = slide.shapes.add_picture(img_path, Inches(8.9), Inches(start_y), width=Inches(target_width))
+            # 将 EMU 单位转换为英寸
+            pic_height_in = pic.height / 914400.0 
+            
+            # 如果图片排版已经超出了PPT的底部边缘，强制缩小图片高度
+            if start_y + pic_height_in > 7.3:
+                pic.height = int((7.3 - start_y) * 914400)
+                pic.width = int(pic.height * (Image.open(img_path).width / Image.open(img_path).height))
+                pic_height_in = pic.height / 914400.0
+                
+            start_y += pic_height_in + 0.15 # 下一张图片的起始Y = 当前图片底部 + 0.15英寸的间距
+        except Exception as e:
+            print(f"Error rendering image {img_path}: {e}")
+
 def make_master_ppt(questions_data):
     prs = Presentation()
     prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
@@ -194,7 +297,8 @@ def make_master_ppt(questions_data):
     global_idx = 1
 
     for q in questions_data:
-        has_imgs = len(q.get('matched_imgs',[])) > 0
+        matched_imgs = q.get('matched_imgs',[])
+        has_imgs = len(matched_imgs) > 0
         text_w = Inches(8.3) if has_imgs else Inches(12.0)
         visual_lines = q['text'].count('\n') + (len(q['text']) / 32)
         q_font, q_space = (14, 1.2) if visual_lines > 15 else ((16, 1.3) if visual_lines > 10 else (18, 1.4))
@@ -202,28 +306,17 @@ def make_master_ppt(questions_data):
         if len(q['text']) > 120:
             slide1 = create_base_slide(prs, f"习题精讲 - 第 {global_idx} 题")
             add_badge_card(slide1, Inches(0.4), Inches(1.2), text_w, Inches(5.8), "原题呈现", c_blue, q['text'], q_font, q_space)
-            if has_imgs:
-                start_y = 1.2
-                for img_path in q['matched_imgs']:
-                    slide1.shapes.add_picture(img_path, Inches(8.9), Inches(start_y), width=Inches(4.0))
-                    start_y += 3.2
+            render_images_on_slide(slide1, matched_imgs) # 调用自适应排版
             
             slide2 = create_base_slide(prs, f"习题精讲 - 第 {global_idx} 题 (解析)")
             add_badge_card(slide2, Inches(0.4), Inches(1.2), text_w, Inches(5.8), "深度解析", c_orange, "待补充解析过程...", 18, 1.4)
-            if has_imgs:
-                start_y = 1.2
-                for img_path in q['matched_imgs']:
-                    slide2.shapes.add_picture(img_path, Inches(8.9), Inches(start_y), width=Inches(4.0))
-                    start_y += 3.2
+            render_images_on_slide(slide2, matched_imgs) # 解析页也带上题图
         else:
             slide = create_base_slide(prs, f"习题精讲 - 第 {global_idx} 题")
             add_badge_card(slide, Inches(0.4), Inches(1.2), text_w, Inches(4.0), "原题呈现", c_blue, q['text'], q_font, q_space)
             add_badge_card(slide, Inches(0.4), Inches(5.4), text_w, Inches(1.8), "深度解析", c_orange, "待补充解析过程...", 16, 1.3)
-            if has_imgs:
-                start_y = 1.2
-                for img_path in q['matched_imgs']:
-                    slide.shapes.add_picture(img_path, Inches(8.9), Inches(start_y), width=Inches(4.0))
-                    start_y += 3.2
+            render_images_on_slide(slide, matched_imgs)
+            
         global_idx += 1
 
     ppt_buffer = io.BytesIO()
@@ -232,7 +325,7 @@ def make_master_ppt(questions_data):
     return ppt_buffer
 
 # ==========================================
-# Streamlit 现代化 Web UI (修复下载按钮消失 Bug)
+# Streamlit 现代化 Web UI
 # ==========================================
 st.set_page_config(page_title="AI 物理教研课件生成器", layout="centered", page_icon="⚛️")
 
@@ -267,16 +360,16 @@ if st.button("✨ 一键生成精美 PPT", type="primary", use_container_width=T
                 status_text.info(f"✅ 成功提取 {len(final_questions)} 道大题！正在渲染排版...")
                 ppt_io = make_master_ppt(final_questions)
                 
-                # 【黑科技】：把生成好的 PPT 强行锁进浏览器的记忆（Session State）里！
+                # 【黑科技】：把生成好的 PPT 强行锁进浏览器的记忆里！
                 st.session_state['ready_ppt'] = ppt_io.getvalue()
                 
                 progress_bar.progress(100)
                 status_text.success("🎉 大功告成！课件已生成，请点击下方按钮下载！")
                 st.balloons()
 
-# 【核心修复】：把下载按钮放在外面，不管怎么点，它都绝对不会消失了！
+# 保持下载按钮常驻
 if 'ready_ppt' in st.session_state:
-    st.markdown("<br>", unsafe_allow_html=True) # 加个空行更好看
+    st.markdown("<br>", unsafe_allow_html=True) 
     st.download_button(
         label="⬇️ 点击这里下载生成的 PPT 课件",
         data=st.session_state['ready_ppt'],
