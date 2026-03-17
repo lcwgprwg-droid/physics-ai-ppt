@@ -6,7 +6,7 @@ import numpy as np
 import tempfile
 import io
 import time
-import gc  # 【新增】极限内存回收模块
+import gc
 import streamlit as st
 import fitz  # PyMuPDF
 import docx  # Python-docx
@@ -17,10 +17,10 @@ from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_SHAPE
 from pptx.enum.text import PP_ALIGN, MSO_AUTO_SIZE
 from pptx.oxml.ns import qn
-from PIL import Image, ImageEnhance, ImageDraw
+from PIL import Image, ImageEnhance
 
 # ==========================================
-# 核心引擎库 (视觉 + OCR 逆向遮罩算法)
+# 核心引擎库 (视觉 + OCR 语义级遮罩算法)
 # ==========================================
 
 def merge_rects(rects, x_margin=40, y_margin=40):
@@ -47,33 +47,42 @@ def merge_rects(rects, x_margin=40, y_margin=40):
         merged.append(box)
     return [(b[0], b[1], b[2]-b[0], b[3]-b[1]) for b in merged]
 
-def extract_images_with_ocr_mask(img_path, ocr_result, out_dir):
+def extract_images_with_ocr_mask(img_path, ocr_result, out_dir, pdf_page=None, scale_factor=1.5):
     img = cv2.imread(img_path)
     if img is None: return[]
 
-    # 【防 OOM 优化】：处理完中间变量后立刻用 del 删除，释放内存
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     mask = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 15, 4)
-    del gray  # 释放内存
+    del gray
 
+    # 【黑科技 1】：语义级选择性遮罩
     if ocr_result:
         for line in ocr_result:
+            text = line[1].strip()
             box = line[0]
-            xs, ys = [int(pt[0]) for pt in box], [int(pt[1]) for pt in box]
-            x_min, x_max = max(0, min(xs)), min(img.shape[1], max(xs))
-            y_min, y_max = max(0, min(ys)), min(img.shape[0], max(ys))
             
-            pad = 4
-            cv2.rectangle(mask, (max(0, x_min-pad), max(0, y_min-pad)), 
-                          (min(img.shape[1], x_max+pad), min(img.shape[0], y_max+pad)), (0, 0, 0), -1)
+            # 智能判断：如果是短字符(如 a, b)或纯数字公式，说明是图表内部标签，保留！
+            # 如果是长文本，说明是正文段落，无情擦除抹黑！
+            is_label = False
+            if len(text) <= 5: is_label = True
+            if re.match(r'^[\d\.\-\+\=\>]+$', text): is_label = True
+            
+            if not is_label:
+                xs, ys = [int(pt[0]) for pt in box], [int(pt[1]) for pt in box]
+                x_min, x_max = max(0, min(xs)), min(img.shape[1], max(xs))
+                y_min, y_max = max(0, min(ys)), min(img.shape[0], max(ys))
+                
+                pad = 4
+                cv2.rectangle(mask, (max(0, x_min-pad), max(0, y_min-pad)), 
+                              (min(img.shape[1], x_max+pad), min(img.shape[0], y_max+pad)), (0, 0, 0), -1)
 
     kernel_dilate = np.ones((12, 12), np.uint8)
     dilated = cv2.dilate(mask, kernel_dilate, iterations=2)
-    del mask  # 释放内存
+    del mask
 
     contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    del dilated  # 释放内存
-    gc.collect() # 强制执行一次垃圾回收，防止服务器崩溃
+    del dilated
+    gc.collect() 
 
     diagram_boxes =[]
     for cnt in contours:
@@ -86,15 +95,28 @@ def extract_images_with_ocr_mask(img_path, ocr_result, out_dir):
 
     saved_imgs =[]
     for i, (x, y, w, h) in enumerate(merged_boxes):
-        pad_x, pad_y = 25, 25
-        x1, y1 = max(0, x - pad_x), max(0, y - pad_y)
-        x2, y2 = min(img.shape[1], x + w + pad_x), min(img.shape[0], y + h + pad_y)
-        roi = img[y1:y2, x1:x2]
+        # 由于我们保留了内部标签，外围扩展从 25 缩小到 8，彻底杜绝粘连上下题目文字！
+        pad = 8 
+        x1, y1 = max(0, x - pad), max(0, y - pad)
+        x2, y2 = min(img.shape[1], x + w + pad), min(img.shape[0], y + h + pad)
 
         p = os.path.join(out_dir, f"fig_{int(time.time()*1000)}_{i}.png")
-        roi_rgb = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
-        pil_img = ImageEnhance.Sharpness(ImageEnhance.Contrast(Image.fromarray(roi_rgb)).enhance(1.2)).enhance(1.8)
-        pil_img.save(p, quality=95)
+        
+        # 【黑科技 2】：PDF 矢量级 400% 定点超清渲染！
+        if pdf_page is not None:
+            # 换算回真实的 PDF 坐标
+            pdf_rect = fitz.Rect(x1/scale_factor, y1/scale_factor, x2/scale_factor, y2/scale_factor)
+            # 以 4.0 倍矩阵进行局部极度高清渲染 (完全不耗费多余内存)
+            pix = pdf_page.get_pixmap(matrix=fitz.Matrix(4.0, 4.0), clip=pdf_rect)
+            pix.save(p)
+            pix = None
+        else:
+            # 普通图片的高清裁剪
+            roi = img[y1:y2, x1:x2]
+            roi_rgb = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
+            pil_img = ImageEnhance.Sharpness(ImageEnhance.Contrast(Image.fromarray(roi_rgb)).enhance(1.1)).enhance(1.5)
+            pil_img.save(p, quality=100)
+
         saved_imgs.append({"path": p, "x_center": x + w/2, "y_center": y + h/2})
 
     del img
@@ -113,13 +135,13 @@ def is_noise(text):
     if re.match(r'^\s*\d+\s*$', text): return True
     return False
 
-def smart_ocr_and_split(img_path, temp_dir):
+def smart_ocr_and_split(img_path, temp_dir, pdf_page=None):
     engine = RapidOCR()
     result, _ = engine(img_path)
-    gc.collect() # 识别完文字后释放模型内存
+    gc.collect() 
     
-    cv_images = extract_images_with_ocr_mask(img_path, result, temp_dir)
-    if not result: return[]
+    cv_images = extract_images_with_ocr_mask(img_path, result, temp_dir, pdf_page=pdf_page)
+    if not result: return[], cv_images
 
     img_cv = cv2.imread(img_path)
     page_center_x = img_cv.shape[1] / 2
@@ -159,33 +181,16 @@ def smart_ocr_and_split(img_path, temp_dir):
         q_cx = (q['x_min'] + q['x_max']) / 2
         q['col'] = 0 if q_cx < page_center_x else 1
 
-    for img in cv_images:
-        img_col = 0 if img['x_center'] < page_center_x else 1
-        col_questions =[q for q in questions if q['col'] == img_col]
-        
-        best_q = None
-        img_y = img['y_center']
-
-        for i, q in enumerate(col_questions):
-            q_top = q['y_min']
-            q_bottom = col_questions[i+1]['y_min'] if i < len(col_questions) - 1 else float('inf')
-            if q_top - 60 <= img_y <= q_bottom + 60:
-                best_q = q
-                break
-                
-        if not best_q and col_questions:
-            best_q = min(col_questions, key=lambda q: abs(q['y_max'] - img_y))
-            
-        if best_q:
-            best_q['matched_imgs'].append(img['path'])
-
-    return questions
+    # 【注意】我们不再在这里做图文匹配，而是将数据返回，交给全局引擎处理！
+    return questions, cv_images
 
 # ==========================================
-# 文档路由引擎
+# 核心路由：全局时空坐标系映射引擎 (解跨页翻页问题)
 # ==========================================
 def process_uploaded_files(uploaded_files, temp_dir):
-    all_questions =[]
+    all_items =[]  # 全局数据池
+    global_page_idx = 0
+
     for file in uploaded_files:
         file_bytes = file.read()
         file_ext = file.name.split('.')[-1].lower()
@@ -193,21 +198,28 @@ def process_uploaded_files(uploaded_files, temp_dir):
         if file_ext in['jpg', 'jpeg', 'png']:
             temp_img_path = os.path.join(temp_dir, file.name)
             with open(temp_img_path, "wb") as f: f.write(file_bytes)
-            qs = smart_ocr_and_split(temp_img_path, temp_dir)
-            all_questions.extend(qs)
+            qs, imgs = smart_ocr_and_split(temp_img_path, temp_dir, pdf_page=None)
+            
+            for q in qs: all_items.append({'type': 'q', 'page': global_page_idx, 'col': q['col'], 'y': q['y_min'], 'data': q})
+            for img in imgs: all_items.append({'type': 'img', 'page': global_page_idx, 'col': img['col'], 'y': img['y_center'], 'data': img})
+            global_page_idx += 1
 
         elif file_ext == 'pdf':
             pdf_doc = fitz.open(stream=file_bytes, filetype="pdf")
             for page_num in range(len(pdf_doc)):
-                # 【防 OOM 优化】：将清晰度矩阵降为 1.2，大幅降低内存占用，画质依然足够
-                pix = pdf_doc.load_page(page_num).get_pixmap(matrix=fitz.Matrix(1.2, 1.2))
+                page = pdf_doc.load_page(page_num)
+                # 依然是 1.5 倍扫描找坐标，节省内存
+                pix = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5))
                 temp_img_path = os.path.join(temp_dir, f"pdf_{file.name}_page_{page_num}.jpg")
                 pix.save(temp_img_path)
-                pix = None # 释放对象
+                pix = None 
                 gc.collect()
                 
-                qs = smart_ocr_and_split(temp_img_path, temp_dir)
-                all_questions.extend(qs)
+                # 传入 page 对象，支持 400% 超清局部爆破渲染
+                qs, imgs = smart_ocr_and_split(temp_img_path, temp_dir, pdf_page=page)
+                for q in qs: all_items.append({'type': 'q', 'page': global_page_idx, 'col': q['col'], 'y': q['y_min'], 'data': q})
+                for img in imgs: all_items.append({'type': 'img', 'page': global_page_idx, 'col': img['col'], 'y': img['y_center'], 'data': img})
+                global_page_idx += 1
 
         elif file_ext == 'docx':
             doc = docx.Document(io.BytesIO(file_bytes))
@@ -216,13 +228,32 @@ def process_uploaded_files(uploaded_files, temp_dir):
                 text = para.text.strip()
                 if not text: continue
                 if re.match(r'^\s*\d+[\.．、](?!\d)', text):
-                    if current_q: all_questions.append(current_q)
+                    if current_q: all_items.append({'type': 'q', 'page': global_page_idx, 'col': 0, 'y': 0, 'data': current_q})
                     current_q = {'text': text, 'matched_imgs':[]}
                 else:
                     if current_q: current_q['text'] += '\n' + text
-            if current_q: all_questions.append(current_q)
+            if current_q: all_items.append({'type': 'q', 'page': global_page_idx, 'col': 0, 'y': 0, 'data': current_q})
+            global_page_idx += 1
 
-    return all_questions
+    # 【黑科技 3】：全局时空排序匹配（跨页/翻页/分栏完美衔接）
+    # 无论横跨几页，严格按照人类阅读顺序（页码 -> 左/右栏 -> 从上到下）排序
+    all_items.sort(key=lambda x: (x['page'], x['col'], x['y']))
+    
+    final_questions =[]
+    current_q_ref = None
+    
+    for item in all_items:
+        if item['type'] == 'q':
+            current_q_ref = item['data']
+            final_questions.append(current_q_ref)
+        elif item['type'] == 'img':
+            # 如果出现了一张图，直接分配给它“上方”（排序前）最近出现的那道题！哪怕横跨了三页纸！
+            if current_q_ref:
+                current_q_ref['matched_imgs'].append(item['data']['path'])
+            elif len(final_questions) > 0:
+                final_questions[-1]['matched_imgs'].append(item['data']['path'])
+
+    return final_questions
 
 # ==========================================
 # PPT 渲染排版引擎 (智能多图排版布局)
@@ -317,11 +348,10 @@ def make_master_ppt(questions_data):
     return ppt_buffer
 
 # ==========================================
-# Streamlit 现代化 Web UI (防OOM内存崩溃 + 终极状态机)
+# Streamlit 现代化 Web UI (固态版状态机)
 # ==========================================
 st.set_page_config(page_title="AI 物理/生物教研课件工作站", layout="centered", page_icon="⚛️")
 
-# 【核心机制】：工业级 UI 状态机，绝不丢按钮
 if 'app_state' not in st.session_state:
     st.session_state['app_state'] = 'idle'
 if 'ready_ppt' not in st.session_state:
@@ -335,28 +365,25 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 uploaded_files = st.file_uploader(
-    "📥 拖拽上传题库资料（支持双栏排版与高强度图片识别）",
+    "📥 拖拽上传题库资料（全面支持跨页断层匹配与超清画质渲染）",
     accept_multiple_files=True,
     type=['jpg', 'jpeg', 'png', 'pdf', 'docx']
 )
 
-# 按钮只负责“修改状态”，不嵌套任何复杂逻辑！
 if st.button("✨ 一键生成精美 PPT", type="primary", use_container_width=True):
     if not uploaded_files:
         st.warning("⚠️ 老师，请先上传文件哦！")
     else:
         st.session_state['app_state'] = 'processing'
-        # 强制网页刷新一次，脱离按钮嵌套
         try:
             st.rerun()
         except AttributeError:
             st.experimental_rerun()
 
-# 后台静默处理区
 if st.session_state['app_state'] == 'processing':
     progress_bar = st.progress(0)
     status_text = st.empty()
-    status_text.info("⚙️ 启动深度视觉与OCR引擎... (开启内存保护模式，请稍候)")
+    status_text.info("⚙️ 启动全局坐标系引擎，构建跨页映射模型... (开启超高清渲染)")
     
     try:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -367,15 +394,13 @@ if st.session_state['app_state'] == 'processing':
                 status_text.error("❌ 抱歉，未能识别到有效题目，请检查图片或PDF内容。")
                 st.session_state['app_state'] = 'error'
             else:
-                status_text.info(f"✅ 成功提取 {len(final_questions)} 道大题！正在渲染排版...")
+                status_text.info(f"✅ 成功提取 {len(final_questions)} 道大题！正在渲染高清 PPT 排版...")
                 ppt_io = make_master_ppt(final_questions)
                 
-                # 保存数据，并标记成功
                 st.session_state['ready_ppt'] = ppt_io.getvalue()
                 st.session_state['app_state'] = 'success'
                 progress_bar.progress(100)
                 
-        # 处理完成后，再次强制网页刷新，让画面直接跳到下载按钮！
         try:
             st.rerun()
         except AttributeError:
@@ -388,13 +413,12 @@ if st.session_state['app_state'] == 'processing':
         st.code(traceback.format_exc())
         st.session_state['app_state'] = 'error'
 
-# 最外层独立挂载下载区，只要状态是 success，按钮永远存在！
 if st.session_state['app_state'] == 'success' and st.session_state['ready_ppt']:
-    st.success("🎉 大功告成！不仅精准剥离了图片，还完美匹配了多图！课件已生成！")
+    st.success("🎉 大功告成！跨页匹配成功，高清画质解析完毕！请点击下方按钮下载！")
     st.download_button(
         label="⬇️ 点击这里下载生成的 PPT 课件",
         data=st.session_state['ready_ppt'],
-        file_name="核心素养习题精讲(AI生成版).pptx",
+        file_name="核心素养习题精讲(超清AI版).pptx",
         mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
         use_container_width=True
     )
