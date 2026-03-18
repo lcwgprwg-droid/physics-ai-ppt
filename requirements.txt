@@ -1,10 +1,9 @@
 streamlit
-opencv-python-headless
+
 numpy
 pix2text[all]
-python-pptx
-pymupdf
-python-docx
+
+
 matplotlib
 opencv-python-headless
 pix2text
