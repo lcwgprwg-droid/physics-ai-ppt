@@ -27,17 +27,27 @@ p2t = load_pix2text()
 # ==========================================
 # 2. 巅峰排版辅助函数 (中英字体分流)
 # ==========================================
-def set_physics_font(run, cn_font='微软雅黑', en_font='Times New Roman'):
-    run.font.name = en_font # 默认字体设为西文
+def set_font_style(run, font_name, is_italic=False):
+    """
+    稳健的中西文字体设置方案，修复 AttributeError
+    """
+    run.font.name = font_name
+    run.font.italic = is_italic
+    
+    # 获取或创建 Run Properties (rPr) 元素
     rPr = run._r.get_or_add_rPr()
+    
+    # 查找或创建 rFonts 元素 (这是最稳健的写法)
     rFonts = rPr.find(qn('w:rFonts'))
     if rFonts is None:
         rFonts = rPr.makeelement(qn('w:rFonts'))
         rPr.append(rFonts)
     
-    rFonts.set(qn('w:eastAsia'), cn_font) # 中文部分用微软雅黑
-    rFonts.set(qn('w:ascii'), en_font)    # 西文部分用 Times New Roman
-    rFonts.set(qn('w:hAnsi'), en_font)
+    # 设置东亚字体（解决中文不显示问题）
+    rFonts.set(qn('w:eastAsia'), font_name)
+    # 同时设置西文字体，确保数字和字母也统一
+    rFonts.set(qn('w:ascii'), font_name)
+    rFonts.set(qn('w:hAnsi'), font_name)
 
 def add_smart_text(text_frame, raw_text):
     """
