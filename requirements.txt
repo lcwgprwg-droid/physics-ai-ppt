@@ -1,7 +1,7 @@
 streamlit
-pix2text>=2.9
+pix2text
 python-pptx
 python-docx
 pymupdf
 pillow
-onnxruntime-cpu
+onnxruntime
