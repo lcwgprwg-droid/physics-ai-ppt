@@ -4,12 +4,7 @@ import re
 import io
 import tempfile
 import time
-import numpy asimport streamlit as st
-import os
-import re
-import io
-import tempfile
-import time
+import numpy as np  # 修正了这里
 import fitz  # PyMuPDF
 import docx
 from pix2text import Pix2Text
@@ -30,6 +25,7 @@ def load_ai_engine():
 
 p2t = load_ai_engine()
 
+# ... (后面接之前的逻辑代码)
 # ==========================================
 # 2. 巅峰排版渲染 (支持真·下标与物理字体)
 # ==========================================
