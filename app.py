@@ -15,20 +15,29 @@ from pptx.enum.text import PP_ALIGN, MSO_AUTO_SIZE
 from pptx.oxml.ns import qn
 
 # ==========================================
-# 1. 初始化 Pix2Text (针对图像/PDF中的公式)
+# 1. 初始化 Pix2Text (专业物理公式引擎)
 # ==========================================
 @st.cache_resource
-def load_pix2text():
+def load_ai_engine():
+    # analyzer_type='mfd' 负责定位公式在正文中的精准坐标，是解决“公式乱飞”的关键
     return Pix2Text(analyzer_type='mfd')
 
-p2t = load_pix2text()
+p2t = load_ai_engine()
 
 # ==========================================
-# 2. 巅峰排版辅助函数
+# 2. 巅峰排版渲染 (支持真·下标与专业字体)
 # ==========================================
-def set_font_style(run, font_name, is_italic=False):
+def set_physics_font(run, font_name='微软雅黑', is_italic=False, is_sub=False, is_sup=False):
+    """设置中西文字体、斜体及真正的上下标属性"""
     run.font.name = font_name
     run.font.italic = is_italic
+    run.font.subscript = is_sub
+    run.font.superscript = is_sup
+    
+    # 物理公式中下标字号稍微缩小更美观
+    if is_sub or is_sup:
+        run.font.size = Pt(14)
+
     rPr = run._r.get_or_add_rPr()
     rFonts = rPr.find(qn('w:rFonts'))
     if rFonts is None:
@@ -36,203 +45,231 @@ def set_font_style(run, font_name, is_italic=False):
         rPr.append(rFonts)
     rFonts.set(qn('w:eastAsia'), font_name)
     rFonts.set(qn('w:ascii'), font_name)
-    rFonts.set(qn('w:hAnsi'), font_name)
 
-def add_smart_text(text_frame, raw_text):
+def render_smart_text(text_frame, raw_content):
     """
-    智能排版：
-    - 中文：微软雅黑
-    - 变量/数字/单位：Times New Roman + 斜体
-    - 处理上标(^)和下标(_)
+    智能流式渲染：解析文本中的 _(下标) 和 ^(上标)，并将变量应用 Times New Roman
     """
     p = text_frame.paragraphs[0]
-    p.line_spacing = 1.2
+    p.line_spacing = 1.3
     
-    # 格式清理
-    clean_text = raw_text.replace('$', '').replace('\\(', '').replace('\\)', '')
+    # 规范化 LaTeX 标记
+    text = raw_content.replace('$', '').replace('\\(', '').replace('\\)', '')
+    # 物理变量正则切分：汉字 | 变量标记 | 普通符号
+    parts = re.split(r'([_][a-zA-Z0-9]+|[\^][a-zA-Z0-9]+)', text)
     
-    # 按中文/非中文分段
-    chunks = re.findall(r'([\u4e00-\u9fa5\s，。？！：；（）《》]+|[^\u4e00-\u9fa5，。？！：；（）《》]+)', clean_text)
-    
-    for chunk in chunks:
-        if not chunk: continue
+    for part in parts:
+        if not part: continue
+        is_sub = part.startswith('_')
+        is_sup = part.startswith('^')
+        clean_text = part[1:] if (is_sub or is_sup) else part
+        
         run = p.add_run()
-        run.text = chunk
+        run.text = clean_text
         run.font.size = Pt(20)
         
-        # 物理量/公式特征判断
-        if re.search(r'[a-zA-Z0-9\.\_\^\{\}\+\-\=\(\)\/\*×]', chunk):
-            set_font_style(run, 'Times New Roman', is_italic=True)
-            run.font.color.rgb = RGBColor(0, 80, 160)
+        # 物理量特征判断：字母、数字、下标标记自动转 Times New Roman 斜体
+        if is_sub or is_sup or re.search(r'[a-zA-Z0-9\.\+\-\=\*×]', clean_text):
+            set_physics_font(run, 'Times New Roman', is_italic=True, is_sub=is_sub, is_sup=is_sup)
+            run.font.color.rgb = RGBColor(0, 80, 160) # 专业物理深蓝
         else:
-            set_font_style(run, '微软雅黑')
-            run.font.color.rgb = RGBColor(30, 30, 30)
+            set_physics_font(run, '微软雅黑')
+            run.font.color.rgb = RGBColor(40, 40, 40)
 
 # ==========================================
-# 3. Word 深度解析引擎 (解决公式和图片漏抓)
+# 3. 核心算法：图片/PDF 视觉重投影排序
 # ==========================================
-def get_docx_advanced_content(doc_obj, tmp_dir):
+def visual_projection_sort(results):
     """
-    全方位解析 Word：
-    1. 递归 XML 捕获所有文本（包括 Math 对象内的文字）
-    2. 自动标记下标(_)和上标(^)
-    3. 全局扫描段落内的所有图片关联(rId)
+    将 OCR 散乱的文字/公式块按人眼阅读顺序缝合。
+    解决公式块因为边框大小导致识别顺序错乱的问题。
     """
-    extracted = []
+    if not results: return ""
+    
+    # 1. 按照 Y 轴坐标初步分行
+    results.sort(key=lambda x: x['position'][0][1])
+    lines = []
+    curr_line = [results[0]]
+    for i in range(1, len(results)):
+        h = abs(results[i]['position'][3][1] - results[i]['position'][0][1])
+        # 垂直距离在行高 60% 内的块视为同一行
+        if abs(results[i]['position'][0][1] - curr_line[-1]['position'][0][1]) < h * 0.6:
+            curr_line.append(results[i])
+        else:
+            # 行内按 X 轴从左到右排序
+            curr_line.sort(key=lambda x: x['position'][0][0])
+            lines.append(curr_line)
+            curr_line = [results[i]]
+    curr_line.sort(key=lambda x: x['position'][0][0])
+    lines.append(curr_line)
+    
+    # 2. 缝合文本
+    full_text = ""
+    for line in lines:
+        row_str = ""
+        for item in line:
+            # 公式块前后加空格防止排版粘连
+            t = f" {item['text']} " if item['type'] == 'formula' else item['text']
+            row_str += t
+        full_text += row_str + "\n"
+    return full_text
+
+# ==========================================
+# 4. 核心算法：Word 物理序节点遍历 (解决漏抓与错位)
+# ==========================================
+def extract_docx_orderly(doc_path, tmp_dir):
+    """
+    深度遍历 Word XML 骨架，按物理先后顺序提取文字、图片和公式。
+    """
+    doc = docx.Document(doc_path)
+    questions = []
     current_q = {"text": "", "imgs": []}
 
-    # Word 数学命名空间
-    M_NS = '{http://schemas.openxmlformats.org/officeDocument/2006/math}'
-    W_NS = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
+    for para in doc.paragraphs:
+        para_stream = ""
+        # 遍历段落底层的 XML 子节点流 (w:r, m:oMath, w:drawing)
+        for child in para._element.getchildren():
+            tag = child.tag
+            # 1. 处理文字节点 (含下标格式)
+            if tag.endswith('}r'): 
+                for t_node in child.iter():
+                    if t_node.tag.endswith('}t'):
+                        # 检查 XML 属性中的上下标
+                        rpr = t_node.getparent().getprevious()
+                        if rpr is not None and rpr.find('.//{*}vertAlign') is not None:
+                            val = rpr.find('.//{*}vertAlign').get('{*}val')
+                            if val == 'subscript': para_stream += "_"
+                            elif val == 'superscript': para_stream += "^"
+                        para_stream += t_node.text if t_node.text else ""
+            
+            # 2. 处理 Office Math 数学公式 (m:oMath)
+            elif tag.endswith('}oMath'):
+                for m_node in child.iter():
+                    if m_node.tag.endswith('}t'):
+                        is_sub = any('sSub' in p.tag for p in m_node.iterancestors())
+                        is_sup = any('sSup' in p.tag for p in m_node.iterancestors())
+                        t = m_node.text if m_node.text else ""
+                        para_stream += f"_{t}" if is_sub else (f"^{t}" if is_sup else t)
+            
+            # 3. 处理插图 (w:drawing)
+            elif tag.endswith('}drawing'):
+                rids = re.findall(r'r:embed="([^"]+)"', child.xml)
+                for rid in rids:
+                    try:
+                        rel = doc.part.related_parts[rid]
+                        img_name = f"w_{int(time.time()*1000)}_{rid}.png"
+                        img_p = os.path.join(tmp_dir, img_name)
+                        with open(img_p, "wb") as f: f.write(rel.blob)
+                        current_q["imgs"].append(img_p)
+                    except: pass
 
-    for para in doc_obj.paragraphs:
-        line_text = ""
+        txt = para_stream.strip()
+        if not txt: continue
         
-        # --- A. 深度解析 XML 获取文本与公式 ---
-        for node in para._element.iter():
-            # 1. 处理标准文本
-            if node.tag == f'{W_NS}t':
-                # 检查父级 rPr 是否有上下标属性
-                rpr = node.getparent().getprevious() if node.getparent() is not None else None
-                text_part = node.text if node.text else ""
-                
-                # 尝试通过属性判断上下标
-                if rpr is not None:
-                    va = rpr.find(f'.//{W_NS}vertAlign')
-                    if va is not None:
-                        val = va.get(f'{W_NS}val')
-                        if val == 'subscript': text_part = f"_{text_part}"
-                        elif val == 'superscript': text_part = f"^{text_part}"
-                line_text += text_part
-
-            # 2. 处理 Office Math 数学文本 (T_1, V_2 等)
-            elif node.tag == f'{M_NS}t':
-                # 检查是否处于下标结构中
-                is_sub = any(p.tag == f'{M_NS}sSub' for p in node.iterancestors())
-                is_sup = any(p.tag == f'{M_NS}sSup' for p in node.iterancestors())
-                
-                mt_text = node.text if node.text else ""
-                if is_sub: line_text += f"_{mt_text}"
-                elif is_sup: line_text += f"^{mt_text}"
-                else: line_text += mt_text
-
-        # --- B. 全局扫描图片 (解决漏抓) ---
-        # 扫描段落 XML 中出现的所有 rId
-        xml_str = para._element.xml
-        rIds = set(re.findall(r'r:embed="([^"]+)"', xml_str) + re.findall(r'r:id="([^"]+)"', xml_str))
-        for rid in rIds:
-            try:
-                rel = doc_obj.part.related_parts[rid]
-                if "image" in rel.content_type:
-                    img_path = os.path.join(tmp_dir, f"wimg_{int(time.time()*1000)}_{rid}.png")
-                    with open(img_path, "wb") as f: f.write(rel.blob)
-                    current_q["imgs"].append(img_path)
-            except: pass
-
-        # --- C. 题目切分 ---
-        content = line_text.strip()
-        if not content: continue
-        
-        # 识别题号（如 14. 或 (1)）
-        if re.match(r'^\s*(\d+[\.．、]|\(\d+\))', content):
-            if current_q["text"]: extracted.append(current_q)
-            current_q = {"text": content + "\n", "imgs": current_q["imgs"] if not current_q["text"] else []}
+        # 题号切分逻辑
+        if re.match(r'^\s*(\d+[\.．、]|\(\d+\))', txt):
+            if current_q["text"]: questions.append(current_q)
+            current_q = {"text": txt + "\n", "imgs": []}
         else:
-            current_q["text"] += content + "\n"
+            current_q["text"] += txt + "\n"
 
-    if current_q["text"]: extracted.append(current_q)
-    return extracted
+    if current_q["text"]: questions.append(current_q)
+    return questions
 
 # ==========================================
-# 4. PPT 页面渲染
+# 5. PPT 渲染引擎
 # ==========================================
-def create_physics_slide(prs, q_text, imgs, idx):
+def create_ppt_slide(prs, q_data, idx):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
-    # 背景
+    
+    # 绘制雅致背景
     bg = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, prs.slide_width, prs.slide_height)
     bg.fill.solid(); bg.fill.fore_color.rgb = RGBColor(252, 254, 255); bg.line.fill.background()
-    # 标题栏
-    bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0.4), Inches(0.35), Inches(0.1), Inches(0.55))
+    
+    # 顶部装饰条
+    bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0.4), Inches(0.4), Inches(0.08), Inches(0.5))
     bar.fill.solid(); bar.fill.fore_color.rgb = RGBColor(0, 112, 192); bar.line.fill.background()
-    tb_title = slide.shapes.add_textbox(Inches(0.6), Inches(0.3), Inches(10), Inches(0.7))
-    p_title = tb_title.text_frame.paragraphs[0]
-    p_title.text = f"2024 高考真题精讲 - 第 {idx} 题"
-    set_font_style(p_title.runs[0], '微软雅黑')
+    
+    # 标题
+    title_tb = slide.shapes.add_textbox(Inches(0.6), Inches(0.35), Inches(10), Inches(0.6))
+    p_title = title_tb.text_frame.paragraphs[0]
+    p_title.text = f"物理教研 · 习题精讲 ({idx:02d})"
+    set_physics_font(p_title.runs[0], font_name='微软雅黑', is_italic=False)
     p_title.runs[0].font.size, p_title.runs[0].font.bold = Pt(24), True
 
     # 布局：左文右图
-    has_img = len(imgs) > 0
-    box_w = Inches(8.2) if has_img else Inches(12.3)
+    has_img = len(q_data['imgs']) > 0
+    box_w = Inches(8.3) if has_img else Inches(12.3)
     
-    card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.4), Inches(1.15), box_w, Inches(5.8))
-    card.fill.solid(); card.fill.fore_color.rgb = RGBColor(255, 255, 255); card.line.color.rgb = RGBColor(220, 230, 240)
+    card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.4), Inches(1.1), box_w, Inches(6.0))
+    card.fill.solid(); card.fill.fore_color.rgb = RGBColor(255, 255, 255); card.line.color.rgb = RGBColor(230, 230, 235)
+    
+    # 渲染主体内容
+    content_tb = slide.shapes.add_textbox(Inches(0.6), Inches(1.3), box_w - Inches(0.4), Inches(5.6))
+    tf = content_tb.text_frame; tf.word_wrap = True; tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+    render_rich_text(tf, q_data['text'])
 
-    content_box = slide.shapes.add_textbox(Inches(0.6), Inches(1.3), box_w - Inches(0.4), Inches(5.4))
-    tf = content_box.text_frame; tf.word_wrap = True; tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
-    add_smart_text(tf, q_text)
-
+    # 图片处理
     if has_img:
-        # 自动排版多张图片
-        for i, img_path in enumerate(list(set(imgs))[:2]): 
-            try: slide.shapes.add_picture(img_path, Inches(8.8), Inches(1.15 + i*3.0), width=Inches(4.2))
+        # 只取前2张图防止堆叠
+        for i, img_path in enumerate(list(set(q_data['imgs']))[:2]):
+            try: slide.shapes.add_picture(img_path, Inches(8.9), Inches(1.2 + i*3.0), width=Inches(4.1))
             except: pass
 
 # ==========================================
-# 5. Streamlit 主界面逻辑
+# 6. Streamlit UI (保持 Session 状态)
 # ==========================================
 st.set_page_config(page_title="AI 物理教研全自动工作站", layout="wide")
 
 st.markdown("""
-<div style='text-align: center;'>
-    <h1 style='color: #0070C0;'>🚀 AI 物理教研全自动工作站</h1>
-    <p style='color: #666;'>深度解决 Word 公式 <b>p₀, 10⁵, V₁</b> 识别缺失与图片抓取问题</p>
-</div>
+    <div style='text-align: center;'>
+        <h2 style='color: #0070C0;'>⚛️ AI 物理教研全自动工作站</h2>
+        <p style='color: #666;'>针对 2024 高考题深度优化：解决 Word 公式错位与图片丢失</p>
+    </div>
 """, unsafe_allow_html=True)
 
-uploaded_files = st.file_uploader("📥 上传 物理图片/PDF/Word", accept_multiple_files=True, type=['jpg', 'png', 'jpeg', 'pdf', 'docx'])
+uploaded = st.file_uploader("📥 上传 物理图片/PDF/Word", accept_multiple_files=True, type=['jpg','png','jpeg','pdf','docx'])
 
-if st.button("✨ 一键开启 AI 深度教研排版", type="primary", use_container_width=True):
-    if not uploaded_files:
-        st.warning("请上传文件")
+if st.button("🚀 一键开启教研级排版生成", type="primary", use_container_width=True):
+    if not uploaded:
+        st.warning("请先上传文件")
     else:
         prs = Presentation()
         prs.slide_width, prs.slide_height = Inches(13.33), Inches(7.5)
-        status_info = st.empty()
+        status = st.empty()
         
         with tempfile.TemporaryDirectory() as tmp_dir:
-            final_extracted = []
-            for f_idx, uploaded_file in enumerate(uploaded_files):
-                ext = uploaded_file.name.split('.')[-1].lower()
-                status_info.info(f"正在处理: {uploaded_file.name} ...")
+            extracted_data = []
+            for f in uploaded:
+                ext = f.name.split('.')[-1].lower()
+                status.info(f"正在深度解析: {f.name} ...")
                 
                 if ext == 'docx':
-                    doc_obj = docx.Document(io.BytesIO(uploaded_file.read()))
-                    final_extracted.extend(get_docx_advanced_content(doc_obj, tmp_dir))
-                
-                elif ext in ['jpg', 'png', 'jpeg', 'pdf']:
-                    # 处理图片和 PDF 的逻辑 (Pix2Text)
+                    # 采用物理流式节点提取逻辑
+                    extracted_data.extend(extract_docx_orderly(io.BytesIO(f.read()), tmp_dir))
+                elif ext in ['jpg', 'png', 'pdf']:
                     if ext == 'pdf':
-                        pdf_doc = fitz.open(stream=uploaded_file.read(), filetype="pdf")
-                        for i in range(len(pdf_doc)):
-                            pix = pdf_doc[i].get_pixmap(matrix=fitz.Matrix(2, 2))
-                            img_p = os.path.join(tmp_dir, f"pdf_{f_idx}_{i}.jpg")
-                            pix.save(img_p)
-                            outs = p2t.recognize_mixed(img_p)
-                            final_extracted.append({"text": "".join([o['text'] for o in outs]), "imgs": []})
+                        doc = fitz.open(stream=f.read(), filetype="pdf")
+                        for i in range(len(doc)):
+                            pix = doc[i].get_pixmap(matrix=fitz.Matrix(2.2, 2.2))
+                            p = os.path.join(tmp_dir, f"p_{i}.jpg")
+                            pix.save(p)
+                            res = p2t.recognize_mixed(p)
+                            extracted_data.append({"text": visual_projection_sort(res), "imgs": []})
                     else:
-                        img_p = os.path.join(tmp_dir, uploaded_file.name)
-                        with open(img_p, "wb") as f: f.write(uploaded_file.read())
-                        outs = p2t.recognize_mixed(img_p)
-                        final_extracted.append({"text": "".join([o['text'] for o in outs]), "imgs": []})
+                        p = os.path.join(tmp_dir, f.name)
+                        with open(p, "wb") as tmp_file: tmp_file.write(f.read())
+                        res = p2t.recognize_mixed(p)
+                        extracted_data.append({"text": visual_projection_sort(res), "imgs": []})
 
-            for idx, q in enumerate(final_extracted):
-                create_physics_slide(prs, q["text"], q["imgs"], idx + 1)
-
-        ppt_io = io.BytesIO()
-        prs.save(ppt_io)
-        st.session_state['ready_ppt'] = ppt_io.getvalue()
-        status_info.success(f"🎉 处理完成！共生成 {len(final_extracted)} 页课件。")
+            for idx, q in enumerate(extracted_data):
+                create_ppt_slide(prs, q, idx + 1)
+        
+        buffer = io.BytesIO()
+        prs.save(buffer)
+        st.session_state['ready_ppt'] = buffer.getvalue()
+        status.success("🎉 排版优化已完成！")
 
 if 'ready_ppt' in st.session_state:
     st.write("---")
-    st.download_button("⬇️ 下载 AI 巅峰排版 PPT", st.session_state['ready_ppt'], "物理巅峰课件.pptx", use_container_width=True)
+    st.download_button("⬇️ 下载优化版 PPT", st.session_state['ready_ppt'], "物理巅峰课件.pptx", use_container_width=True)
