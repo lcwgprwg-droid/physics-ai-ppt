@@ -1,12 +1,7 @@
 streamlit
-
-numpy
-pix2text[all]
-
-
-matplotlib
 opencv-python-headless
 pix2text
 python-pptx
 python-docx
 pymupdf
+pillow
