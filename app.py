@@ -17,139 +17,150 @@ from pptx.enum.text import PP_ALIGN, MSO_AUTO_SIZE
 from pptx.oxml.ns import qn
 
 # ==========================================
-# 1. 核心 OCR 引擎 (极速单例)
+# 1. 常量配置（设计规范）
+# ==========================================
+class PPTConfig:
+    WIDTH = Inches(13.333)
+    HEIGHT = Inches(7.5)
+    COLOR_BG = RGBColor(245, 247, 250)
+    COLOR_BLUE = RGBColor(0, 112, 192)
+    COLOR_TEXT = RGBColor(0, 0, 0)      # 强行锁定黑色，杜绝变白
+    COLOR_SUBTEXT = RGBColor(80, 80, 80)
+    FONT_MAIN = "微软雅黑"
+    FONT_MATH = "Times New Roman"
+
+# ==========================================
+# 2. 核心 OCR 引擎 (RapidOCR)
 # ==========================================
 @st.cache_resource
 def get_ocr_engine():
     return RapidOCR()
 
 # ==========================================
-# 2. 视觉算法：物理碎片全量捕获 (V22)
+# 3. 视觉工程：物理符号与图像捕获 (V23)
 # ==========================================
-def extract_visual_elements_v22(img_path, out_dir):
+def extract_physics_vision(img_path, ocr_result, out_dir):
     """
-    针对物理题：
-    1. 捕捉所有笔迹块（图示、公式、特殊符号）。
-    2. 使用 (30, 8) 的宽核，连接横向分布的公式 (如 v=10m/s)。
-    3. 排除全页背景大框。
+    高级视觉策略：
+    1. 计算 OCR 识别框，建立文字保护区。
+    2. 利用 Morphological Transformations 连接物理线条。
+    3. 提取所有非文字核心区的视觉元素（图+公式）。
     """
     img = cv2.imread(img_path)
     if img is None: return []
     h_img, w_img = img.shape[:2]
     
+    # 获取文字区域掩膜
+    text_mask = np.zeros((h_img, w_img), dtype=np.uint8)
+    if ocr_result:
+        for line in ocr_result:
+            box = np.array(line[0]).astype(np.int32)
+            cv2.fillPoly(text_mask, [box], 255)
+
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    # 高灵敏度自适应二值化
-    binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 25, 10)
+    # 保护物理细线：降低阈值
+    binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 21, 8)
     
-    # 核心：使用宽矩形核膨胀，专门针对物理公式排版
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (30, 8))
+    # 物理特化：横向膨胀合并公式
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (40, 10))
     dilated = cv2.dilate(binary, kernel, iterations=1)
     
-    contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # 移除被 OCR 确认的密集文字区，剩下孤立的符号和插图
+    clean_dilated = cv2.subtract(dilated, text_mask)
     
-    visuals = []
+    contours, _ = cv2.findContours(clean_dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    visual_elements = []
     for cnt in contours:
         x, y, w, h = cv2.boundingRect(cnt)
-        # 1. 尺寸过滤：排除全页外框 (教辅书外围圆角矩形)
-        if w > w_img * 0.9 or h > h_img * 0.9: continue
-        # 2. 面积过滤：保留具有视觉意义的块
-        if w > 25 and h > 15:
-            roi = img[y:y+h, x:x+w]
-            # 过滤纯白无效块
-            if np.mean(roi) > 252: continue
+        if w > w_img * 0.9 or h > h_img * 0.9: continue # 过滤大边框
+        if w < 25 or h < 20: continue # 过滤杂质
+        
+        roi = img[y:y+h, x:x+w]
+        if np.mean(roi) > 252: continue
+        
+        f_name = f"diag_{int(time.time()*1000)}_{x}.png"
+        f_path = os.path.join(out_dir, f_name)
+        cv2.imwrite(f_path, roi)
+        visual_elements.append({"path": f_path, "y": y + h/2, "area": w * h})
             
-            f_path = os.path.join(out_dir, f"ve_{int(time.time()*1000)}_{x}.png")
-            cv2.imwrite(f_path, roi)
-            visuals.append({"path": f_path, "y": y + h/2, "area": w * h})
-            
-    # 按垂直位置排序，同时保证大图优先
-    return sorted(visuals, key=lambda v: v['y'])
+    return visual_elements
 
 # ==========================================
-# 3. PPT 渲染：【强制左对齐，标准 API】
+# 4. PPT 渲染 Builder (强制视觉规范)
 # ==========================================
-def render_master_ppt(questions):
+def add_styled_paragraph(tf, text, is_title=False):
     """
-    标准渲染引擎：
-    1. 强制左对齐排版。
-    2. 兼容中文字体设置。
-    3. 绝不使用链式调用。
+    显式声明每一个段落的属性，确保绝无白字、绝不居中。
     """
-    prs = Presentation()
-    prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
+    p = tf.add_paragraph() if len(tf.paragraphs) > 0 and tf.paragraphs[0].text else tf.paragraphs[0]
+    p.alignment = PP_ALIGN.LEFT
+    p.line_spacing = 1.2
     
-    for i, q in enumerate(questions):
+    run = p.add_run()
+    run.text = text.strip()
+    run.font.name = PPTConfig.FONT_MAIN
+    run.font.size = Pt(24 if is_title else 18)
+    run.font.bold = is_title
+    run.font.color.rgb = PPTConfig.COLOR_TEXT # 强制黑色
+    
+    # 强制东亚语言字体注入
+    rPr = run._r.get_or_add_rPr()
+    ea = rPr.get_or_add_ea()
+    ea.set('typeface', PPTConfig.FONT_MAIN)
+    return p
+
+def render_physics_master(all_qs):
+    prs = Presentation()
+    prs.slide_width = PPTConfig.WIDTH
+    prs.slide_height = PPTConfig.HEIGHT
+
+    for i, q in enumerate(all_qs):
         slide = prs.slides.add_slide(prs.slide_layouts[6])
         
-        # 背景
+        # 背景底色
         bg = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, prs.slide_width, prs.slide_height)
-        bg.fill.solid()
-        bg.fill.fore_color.rgb = RGBColor(245, 247, 250)
-        bg.line.fill.background()
+        bg.fill.solid(); bg.fill.fore_color.rgb = PPTConfig.COLOR_BG; bg.line.fill.background()
         
-        # 装饰条
+        # 蓝色装饰指示器
         bar = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.4), Inches(0.4), Inches(0.12), Inches(0.55))
-        bar.fill.solid()
-        bar.fill.fore_color.rgb = RGBColor(0, 112, 192)
-        bar.line.fill.background()
+        bar.fill.solid(); bar.fill.fore_color.rgb = PPTConfig.COLOR_BLUE; bar.line.fill.background()
         
-        # 标题 (左对齐)
+        # 页面标题
         title_box = slide.shapes.add_textbox(Inches(0.6), Inches(0.32), Inches(11), Inches(0.8))
-        p_title = title_box.text_frame.paragraphs[0]
-        p_title.alignment = PP_ALIGN.LEFT
-        run_t = p_title.add_run()
-        run_t.text = f"习题精讲 第 {i+1} 题"
-        run_t.font.size = Pt(26)
-        run_t.font.bold = True
-        run_t.font.color.rgb = RGBColor(20, 40, 80)
-        run_t.font.name = '微软雅黑'
+        add_styled_paragraph(title_box.text_frame, f"习题精讲 第 {i+1} 题", is_title=True)
+        
+        has_imgs = len(q.get('imgs', [])) > 0
+        txt_w = Inches(8.5) if has_imgs else Inches(12.3)
 
-        has_vis = len(q.get('imgs', [])) > 0
-        txt_w = Inches(8.5) if has_vis else Inches(12.3)
-
-        # 题干卡片
+        # 1. 题干白色卡片
         card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.5), Inches(1.3), txt_w, Inches(4.3))
-        card.fill.solid()
-        card.fill.fore_color.rgb = RGBColor(255, 255, 255)
-        card.line.color.rgb = RGBColor(220, 220, 225)
+        card.fill.solid(); card.fill.fore_color.rgb = RGBColor(255, 255, 255); card.line.color.rgb = RGBColor(210, 210, 215)
         
-        tf = card.text_frame
-        tf.word_wrap = True
-        tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+        tf_q = card.text_frame
+        tf_q.word_wrap = True
+        tf_q.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
         
-        # 填充正文 (锁定左对齐)
-        raw_text = q.get('text', '内容识别中...').strip()
-        lines = raw_text.split('\n')
-        for idx, line in enumerate(lines):
-            p = tf.paragraphs[0] if idx == 0 else tf.add_paragraph()
-            p.alignment = PP_ALIGN.LEFT
-            p.line_spacing = 1.3
-            r = p.add_run()
-            r.text = line.strip()
-            r.font.size = Pt(18)
-            r.font.name = '微软雅黑'
-            # 底层 XML 中文字体锁定
-            try:
-                rPr = r._r.get_or_add_rPr()
-                ea = rPr.get_or_add_ea()
-                ea.set('typeface', '微软雅黑')
-            except: pass
+        # 逐行填入文字
+        content_lines = q.get('text', '').split('\n')
+        for line in content_lines:
+            if line.strip():
+                add_styled_paragraph(tf_q, line)
 
-        # 思路解析区
+        # 2. 思路分析卡片
         card2 = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.5), Inches(5.7), txt_w, Inches(1.4))
-        card2.fill.solid()
-        card2.fill.fore_color.rgb = RGBColor(255, 255, 255)
-        card2.line.color.rgb = RGBColor(220, 220, 225)
-        p2 = card2.text_frame.paragraphs[0]
-        p2.alignment = PP_ALIGN.LEFT
-        r2 = p2.add_run(); r2.text = "思路解析：正在整理中..."; r2.font.size = Pt(16); r2.font.color.rgb = RGBColor(120, 120, 120)
+        card2.fill.solid(); card2.fill.fore_color.rgb = RGBColor(255, 255, 255); card2.line.color.rgb = RGBColor(210, 210, 215)
+        
+        tf_s = card2.text_frame
+        p_s = add_styled_paragraph(tf_s, "思路解析：待补充受力分析与公式推导过程...")
+        p_s.runs[0].font.color.rgb = PPTConfig.COLOR_SUBTEXT # 辅助文字灰色
+        p_s.runs[0].font.size = Pt(16)
 
-        # 投放插图 (物理图 & 公式原图)
-        if has_vis:
+        # 3. 投放视觉元素
+        if has_imgs:
             y_ptr = 1.3
-            # 按垂直位置排序
             q['imgs'].sort(key=lambda x: x['y'])
-            for img_info in q['imgs'][:3]:
+            for img_info in q['imgs'][:3]: # 取前3个核心图
                 try:
                     slide.shapes.add_picture(img_info['path'], Inches(9.2), Inches(y_ptr), width=Inches(3.8))
                     y_ptr += 2.0 
@@ -160,44 +171,49 @@ def render_master_ppt(questions):
     return buf.getvalue()
 
 # ==========================================
-# 4. 业务流
+# 5. 业务逻辑层：支持混合输入
 # ==========================================
-st.set_page_config(page_title="物理教研课件 AI", layout="centered")
-st.title("⚛️ 物理题自动 PPT (最终修复版)")
+st.set_page_config(page_title="高级教研 AI 工具", layout="centered")
+st.title("⚛️ AI 物理教研工作站 (程序员视角版)")
 
-files = st.file_uploader("📤 上传资料 (Word/PDF/图片)", accept_multiple_files=True, type=['docx', 'pdf', 'png', 'jpg'])
+uploaded_files = st.file_uploader("📥 上传 Word / PDF / 图片", accept_multiple_files=True, type=['docx', 'pdf', 'png', 'jpg'])
 
-if st.button("🚀 开启极速转换", type="primary", use_container_width=True):
-    if not files:
-        st.error("老师，请上传文件。")
+if st.button("🚀 极速生成 PPT", type="primary", use_container_width=True):
+    if not uploaded_files:
+        st.error("老师，请先上传文件。")
     else:
-        all_final_qs = []  # 【关键修复】：全局统一变量名
+        all_final_qs = []
         engine = get_ocr_engine()
         with tempfile.TemporaryDirectory() as tmpdir:
-            for file in files:
+            for file in uploaded_files:
+                st.write(f"正在深度解析: {file.name}")
                 ext = file.name.split('.')[-1].lower()
                 
-                # --- Word 解析：暴力提取 ---
+                # --- Word 解析：100% 捕获 ---
                 if ext == 'docx':
                     doc = Document(io.BytesIO(file.read()))
-                    cur_q = None
-                    for p in doc.paragraphs:
-                        t = p.text.strip()
-                        if not t: continue
-                        # 兼容题号匹配
-                        if re.match(r'^(\d+|[\(（]\d+[\)）])[\.．、\s]', t) or len(t) < 8:
-                            if cur_q: all_final_qs.append(cur_q)
-                            cur_q = {"text": t, "imgs": []}
-                        elif cur_q: cur_q['text'] += "\n" + t
-                    if cur_q: all_final_qs.append(cur_q)
+                    cur_text = "\n".join([p.text for p in doc.paragraphs if p.text.strip()])
+                    # 鲁棒切分逻辑
+                    parts = re.split(r'(\d+[\.．、\s])', cur_text)
+                    if len(parts) <= 1:
+                        all_final_qs.append({"text": cur_text, "imgs": []})
+                    else:
+                        temp_q = None
+                        for p in parts:
+                            if re.match(r'\d+[\.．、\s]', p):
+                                if temp_q: all_final_qs.append(temp_q)
+                                temp_q = {"text": p, "imgs": []}
+                            elif temp_q:
+                                temp_q["text"] += p
+                        if temp_q: all_final_qs.append(temp_q)
                 
-                # --- 图片/PDF 解析：见字必录 ---
+                # --- 视觉解析 (PDF/图片) ---
                 else:
                     input_paths = []
                     if ext == 'pdf':
                         pdf_doc = fitz.open(stream=file.read(), filetype="pdf")
                         for page in pdf_doc:
-                            pix = page.get_pixmap(matrix=fitz.Matrix(2.2, 2.2))
+                            pix = page.get_pixmap(matrix=fitz.Matrix(2.5, 2.5)) # 提高画质
                             p_p = os.path.join(tmpdir, f"p_{time.time()}.png")
                             pix.save(p_p); input_paths.append(p_p)
                     else:
@@ -207,34 +223,7 @@ if st.button("🚀 开启极速转换", type="primary", use_container_width=True
                     
                     for p_path in input_paths:
                         res, _ = engine(p_path)
-                        # 核心改进：捕获所有视觉碎片
-                        visual_elements = extract_visual_elements_v22(p_path, tmpdir)
+                        visuals = extract_physics_vision(p_path, res, tmpdir)
                         
+                        # 语义化切题
                         page_qs = []
-                        cur_q = None
-                        if res:
-                            for line in res:
-                                txt = line[1].strip()
-                                # 只要识别到开头是数字或括号数字，就开启新题
-                                if re.match(r'^(\d+|[\(（]\d+[\)）])', txt):
-                                    if cur_q: page_qs.append(cur_q)
-                                    cur_q = {"text": txt, "imgs": [], "y": (line[0][0][1] + line[0][2][1])/2}
-                                elif cur_q: cur_q['text'] += "\n" + txt
-                                elif not cur_q: # 兜底逻辑
-                                    cur_q = {"text": txt, "imgs": [], "y": (line[0][0][1] + line[0][2][1])/2}
-                            
-                            if cur_q: page_qs.append(cur_q)
-                        
-                        # 空间关联
-                        for ve in visual_elements:
-                            if page_qs:
-                                target = min(page_qs, key=lambda q: abs(q['y'] - ve['y']))
-                                target['imgs'].append(ve)
-                        all_final_qs.extend(page_qs)
-
-            if all_final_qs:
-                ppt_buf = render_master_ppt(all_final_qs)
-                st.download_button("📥 下载课件", ppt_buf, "物理精品课件_最终版.pptx", use_container_width=True)
-                st.success(f"识别成功：共生成 {len(all_final_qs)} 页 PPT。")
-            else:
-                st.error("未能找到任何题目内容，请检查文件格式。")
