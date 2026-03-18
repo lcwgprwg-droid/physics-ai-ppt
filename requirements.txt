@@ -1,7 +1,7 @@
 streamlit
 opencv-python-headless
 numpy
-rapidocr_onnxruntime
+pix2text[all]
 python-pptx
 pymupdf
 python-docx
