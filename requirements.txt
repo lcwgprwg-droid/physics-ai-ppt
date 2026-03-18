@@ -1,8 +1,8 @@
 streamlit
 opencv-python-headless
-rapidocr-onnxruntime
-python-pptx
-Pillow
-PyMuPDF
-python-docx
 numpy
+rapidocr_onnxruntime
+python-pptx
+pymupdf
+python-docx
+matplotlib
