@@ -6,3 +6,8 @@ python-pptx
 pymupdf
 python-docx
 matplotlib
+opencv-python-headless
+pix2text
+python-pptx
+python-docx
+pymupdf
