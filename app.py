@@ -20,262 +20,206 @@ from pptx.oxml.ns import qn
 from PIL import Image, ImageEnhance
 
 # ==========================================
-# 核心引擎库：全局缓存 OCR 模型 (极速且防卡死)
+# 1. 核心引擎库：全局缓存 OCR 模型
 # ==========================================
 @st.cache_resource
 def get_ocr_engine():
-    """将庞大的AI模型常驻内存，只加载一次，拒绝重复加载导致的内存爆炸"""
     return RapidOCR()
 
-def merge_rects(rects, x_margin=60, y_margin=60):
+# ==========================================
+# 2. 增强型图像处理逻辑
+# ==========================================
+def get_distance(box1_center, box2_center):
+    """计算两个点之间的欧式距离"""
+    return math.sqrt((box1_center[0] - box2_center[0])**2 + (box1_center[1] - box2_center[1])**2)
+
+def is_box_close(b1, b2, threshold=60):
+    """判断两个矩形框是否足够接近以合并"""
+    # b = [x1, y1, x2, y2]
+    return not (b1[2] < b2[0] - threshold or b1[0] > b2[2] + threshold or 
+                b1[3] < b2[1] - threshold or b1[1] > b2[3] + threshold)
+
+def merge_boxes(rects, threshold=50):
     if not rects: return []
-    boxes = [[r[0], r[1], r[0]+r[2], r[1]+r[3]] for r in rects] 
+    res = []
+    while rects:
+        curr = rects.pop(0)
+        has_merged = False
+        for i in range(len(res)):
+            if is_box_close(curr, res[i], threshold):
+                res[i] = [min(curr[0], res[i][0]), min(curr[1], res[i][1]),
+                          max(curr[2], res[i][2]), max(curr[3], res[i][3])]
+                has_merged = True
+                break
+        if not has_merged:
+            res.append(curr)
+    return res
 
-    def is_close(b1, b2):
-        return not (b1[2] < b2[0] - x_margin or b1[0] > b2[2] + x_margin or 
-                    b1[3] < b2[1] - y_margin or b1[1] > b2[3] + y_margin)
-
-    merged =[]
-    while boxes:
-        box = boxes.pop(0)
-        has_merged = True
-        while has_merged:
-            has_merged = False
-            for i in range(len(boxes)-1, -1, -1):
-                other = boxes[i]
-                if is_close(box, other):
-                    box = [min(box[0], other[0]), min(box[1], other[1]),
-                           max(box[2], other[2]), max(box[3], other[3])]
-                    boxes.pop(i)
-                    has_merged = True
-        merged.append(box)
-    return [(b[0], b[1], b[2]-b[0], b[3]-b[1]) for b in merged]
-
-def extract_images_with_ocr_mask(img_path, ocr_result, out_dir, pdf_page=None, scale_factor=1.5):
+def extract_images_v2(img_path, ocr_result, out_dir, pdf_page=None):
+    """
+    针对物理题图优化的提取算法
+    """
     img = cv2.imread(img_path)
-    if img is None: return[]
-
+    if img is None: return []
+    h_img, w_img = img.shape[:2]
+    
+    # 预处理：灰度与边缘检测
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
-    del gray
-
-    text_erase_mask = np.zeros_like(thresh)
+    
+    # 创建文字遮罩 - 核心改进：排除掉物理图示中的短字符标签
+    text_mask = np.zeros((h_img, w_img), dtype=np.uint8)
     if ocr_result:
         for line in ocr_result:
+            box = np.array(line[0]).astype(np.int32)
             text = line[1].strip()
-            box = line[0]
-            
-            is_label = False
-            if len(text) <= 5 and not bool(re.search(r'[\u4e00-\u9fa5]', text)):
-                is_label = True
-            
-            if not is_label:
-                xs, ys =[int(pt[0]) for pt in box], [int(pt[1]) for pt in box]
-                x_min, x_max = max(0, min(xs)), min(img.shape[1], max(xs))
-                y_min, y_max = max(0, min(ys)), min(img.shape[0], max(ys))
-                
-                h_box = y_max - y_min
-                pad_x = int(h_box * 0.6) 
-                pad_y = int(h_box * 0.3) 
-                
-                cv2.rectangle(text_erase_mask, 
-                              (max(0, x_min - pad_x), max(0, y_min - pad_y)), 
-                              (min(img.shape[1], x_max + pad_x), min(img.shape[0], y_max + pad_y)), 
-                              255, -1)
+            # 物理图示中常见的字母标注通常很短且不含汉字，不遮蔽它们，否则图会断开
+            if len(text) <= 2 and not re.search(r'[\u4e00-\u9fa5]', text):
+                continue
+            cv2.fillPoly(text_mask, [box], 255)
 
-    clean_thresh = cv2.subtract(thresh, text_erase_mask)
-    del thresh
-    del text_erase_mask
+    # 形态学操作：寻找除了文字以外的连通区域
+    # 使用Canny算法能更好地抓住细线（如绳子、斜面）
+    edges = cv2.Canny(gray, 30, 150)
+    edges[text_mask > 0] = 0 # 剔除文字区的边缘干扰
+    
+    # 动态调整核大小：根据图片宽度适配
+    k_size = max(3, int(w_img / 150))
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (k_size, k_size))
+    # 闭运算连接断裂线条
+    morphed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
+    morphed = cv2.dilate(morphed, kernel, iterations=2)
 
-    kernel_close = np.ones((12, 12), np.uint8)
-    closed = cv2.morphologyEx(clean_thresh, cv2.MORPH_CLOSE, kernel_close)
-    del clean_thresh
-
-    kernel_dilate = np.ones((10, 10), np.uint8)
-    dilated = cv2.dilate(closed, kernel_dilate, iterations=2)
-    del closed
-
-    contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    del dilated
-    gc.collect() 
-
-    diagram_boxes =[]
+    contours, _ = cv2.findContours(morphed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    raw_boxes = []
     for cnt in contours:
         x, y, w, h = cv2.boundingRect(cnt)
-        if w > 35 and h > 35 and (w * h) > 1500:
-            if w < img.shape[1] * 0.9 and h < img.shape[0] * 0.9:
-                diagram_boxes.append((x, y, w, h))
+        # 物理图面积过滤：太小的是噪点，太大的是背景
+        if w > 40 and h > 40 and (w * h) > 2000:
+            if w < w_img * 0.9 and h < h_img * 0.9:
+                raw_boxes.append([x, y, x + w, y + h])
 
-    merged_boxes = merge_rects(diagram_boxes, x_margin=60, y_margin=60)
-
-    saved_imgs =[]
-    for i, (x, y, w, h) in enumerate(merged_boxes):
-        pad = 15 
-        x1, y1 = max(0, x - pad), max(0, y - pad)
-        x2, y2 = min(img.shape[1], x + w + pad), min(img.shape[0], y + h + pad)
-
+    final_rects = merge_boxes(raw_boxes, threshold=60)
+    
+    saved_imgs = []
+    for i, box in enumerate(final_rects):
+        # 增加 Padding 以包含完整的物理标注
+        pad = 15
+        x1, y1, x2, y2 = max(0, box[0]-pad), max(0, box[1]-pad), min(w_img, box[2]+pad), min(h_img, box[3]+pad)
+        
         p = os.path.join(out_dir, f"fig_{int(time.time()*1000)}_{i}.png")
         
+        # 针对 PDF 导出高清原图
         if pdf_page is not None:
-            pdf_rect = fitz.Rect(x1/scale_factor, y1/scale_factor, x2/scale_factor, y2/scale_factor)
-            pix = pdf_page.get_pixmap(matrix=fitz.Matrix(4.0, 4.0), clip=pdf_rect)
+            # 这里的坐标缩放需根据 OCR 识别时的 dpi 调整
+            scale = h_img / pdf_page.rect.height
+            pdf_rect = fitz.Rect(x1/scale, y1/scale, x2/scale, y2/scale)
+            pix = pdf_page.get_pixmap(matrix=fitz.Matrix(3.0, 3.0), clip=pdf_rect)
             pix.save(p)
-            pix = None
         else:
             roi = img[y1:y2, x1:x2]
-            roi_rgb = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
-            pil_img = ImageEnhance.Sharpness(ImageEnhance.Contrast(Image.fromarray(roi_rgb)).enhance(1.1)).enhance(1.5)
-            pil_img.save(p, quality=100)
+            cv2.imwrite(p, roi)
 
-        saved_imgs.append({"path": p, "x_center": x + w/2, "y_center": y + h/2})
-
-    del img
-    gc.collect()
+        saved_imgs.append({
+            "path": p, 
+            "center": ((x1+x2)/2, (y1+y2)/2),
+            "area": (x2-x1)*(y2-y1)
+        })
+    
     return saved_imgs
 
-def post_process_text(text):
-    text = re.sub(r'光敏电阻符号是[^\，。]*(?=，|。|$)', '光敏电阻符号是[             ] ', text)
-    text = re.sub(r'电磁开关符号是[^\，。]*(?=，|。|$)', '电磁开关符号是[             ] ', text)
-    return text
-
-def is_noise(text):
-    noise_words =['复习与提高', 'A组', 'B组', '高中物理', '必修', '选择性', '扫描全能王', '复习题', '练习题']
-    for w in noise_words:
-        if w in text: return True
-    if re.match(r'^\s*\d+\s*$', text): return True
-    return False
-
-def smart_ocr_and_split(img_path, temp_dir, pdf_page=None):
-    engine = get_ocr_engine()  # 【关键修改】：调用单例引擎，不再每次重新初始化！
+# ==========================================
+# 3. 智能题目解析与图文绑定
+# ==========================================
+def smart_process(img_path, temp_dir, pdf_page=None):
+    engine = get_ocr_engine()
     result, _ = engine(img_path)
     
-    cv_images = extract_images_with_ocr_mask(img_path, result, temp_dir, pdf_page=pdf_page)
+    # 1. 提取图片
+    extracted_images = extract_images_v2(img_path, result, temp_dir, pdf_page)
     
+    # 2. 识别题目文本（处理分栏）
     img_cv = cv2.imread(img_path)
-    page_center_x = img_cv.shape[1] / 2
-    del img_cv
-    gc.collect()
+    h_page, w_page = img_cv.shape[:2]
+    mid_x = w_page / 2
 
-    for img in cv_images:
-        img['col'] = 0 if img['x_center'] < page_center_x else 1
+    lines = []
+    if result:
+        for line in result:
+            box, text = line[0], line[1]
+            cx = (box[0][0] + box[1][0]) / 2
+            cy = (box[0][1] + box[2][1]) / 2
+            col = 0 if cx < mid_x else 1
+            lines.append({"col": col, "y": cy, "text": text.strip(), "box": box})
 
-    if not result: return[], cv_images
+    # 排序：先分栏再纵向
+    lines.sort(key=lambda x: (x['col'], x['y']))
 
-    sorted_lines =[]
-    for line in result:
-        box, text = line[0], line[1]
-        cx, cy = (box[0][0] + box[1][0]) / 2, (box[0][1] + box[3][1]) / 2
-        col_idx = 0 if cx < page_center_x else 1
-        sorted_lines.append({"col": col_idx, "y": cy, "box": box, "text": text})
+    questions = []
+    current_q = None
 
-    sorted_lines.sort(key=lambda item: (item['col'], item['y']))
-    questions, current_q =[], None
+    # 题号匹配正则（物理题常见题号格式）
+    q_pattern = r'^\s*\d+[\.．、\(（]'
 
-    for item in sorted_lines:
-        text = item['text'].strip()
-        box = item['box']
-        x_left, x_right, y_top, y_bottom = box[0][0], box[1][0], box[0][1], box[2][1]
+    for line in lines:
+        text = line['text']
+        if not text: continue
+        
+        # 噪声过滤
+        if any(kw in text for kw in ['扫描', '答案', '公众号', '页码', '物理']): continue
 
-        if is_noise(text): continue
-        if re.match(r'^\s*\d+[\.．、](?!\d)', text):
+        if re.match(q_pattern, text):
             if current_q: questions.append(current_q)
-            current_q = {'text': text, 'x_min': x_left, 'x_max': x_right, 'y_min': y_top, 'y_max': y_bottom, 'matched_imgs':[]}
+            current_q = {
+                "text": text, 
+                "center": ((line['box'][0][0]+line['box'][1][0])/2, (line['box'][0][1]+line['box'][2][1])/2),
+                "matched_imgs": [],
+                "col": line['col']
+            }
         else:
-            if current_q is None: continue
-            if re.match(r'^\s*([A-D][\.．、]|\(\d+\)|①|②|③)', text): current_q['text'] += '\n' + text
-            else: current_q['text'] += text
-            current_q['x_min'], current_q['x_max'] = min(current_q['x_min'], x_left), max(current_q['x_max'], x_right)
-            current_q['y_min'], current_q['y_max'] = min(current_q['y_min'], y_top), max(current_q['y_max'], y_bottom)
+            if current_q:
+                current_q["text"] += "\n" + text
+                # 更新题目中心位置（趋向于题目主体）
+                new_y = (current_q["center"][1] + line['y']) / 2
+                current_q["center"] = (current_q["center"][0], new_y)
 
     if current_q: questions.append(current_q)
-    
-    for q in questions:
-        q['text'] = post_process_text(q['text'])
-        q_cx = (q['x_min'] + q['x_max']) / 2
-        q['col'] = 0 if q_cx < page_center_x else 1
 
-    return questions, cv_images
+    # 3. 核心改进：图文引力绑定算法
+    for img in extracted_images:
+        img_cx, img_cy = img['center']
+        img_col = 0 if img_cx < mid_x else 1
+        
+        best_q = None
+        min_dist = float('inf')
 
-# ==========================================
-# 核心路由：全局时空坐标系映射引擎 (带动态进度反馈)
-# ==========================================
-def process_uploaded_files(uploaded_files, temp_dir, status_text=None, progress_bar=None):
-    all_items =[]  
-    global_page_idx = 0
-    total_files = len(uploaded_files)
-
-    for file_idx, file in enumerate(uploaded_files):
-        # 【关键修改】：实时向 UI 汇报进度，防止假死焦虑
-        if status_text:
-            status_text.info(f"⚙️ 正在精细解析第 {file_idx + 1}/{total_files} 份文件：{file.name} ...")
-        if progress_bar:
-            progress_bar.progress(int((file_idx / total_files) * 60))
-
-        file_bytes = file.read()
-        file_ext = file.name.split('.')[-1].lower()
-
-        if file_ext in['jpg', 'jpeg', 'png']:
-            temp_img_path = os.path.join(temp_dir, file.name)
-            with open(temp_img_path, "wb") as f: f.write(file_bytes)
-            qs, imgs = smart_ocr_and_split(temp_img_path, temp_dir, pdf_page=None)
+        for q in questions:
+            # 规则1：同栏优先
+            col_penalty = 0 if q['col'] == img_col else 1000
             
-            for q in qs: all_items.append({'type': 'q', 'page': global_page_idx, 'col': q['col'], 'y': q['y_min'], 'data': q})
-            for img in imgs: all_items.append({'type': 'img', 'page': global_page_idx, 'col': img['col'], 'y': img['y_center'], 'data': img})
-            global_page_idx += 1
+            # 规则2：物理图通常在题干下方，计算垂直距离
+            # 如果图片在题目下方，dist 为正且较小
+            v_dist = img_cy - q['center'][1]
+            if v_dist < -50: # 图片在题目上方太远，不合理
+                v_dist = abs(v_dist) * 2 
+            
+            h_dist = abs(img_cx - q['center'][0])
+            
+            dist = math.sqrt(h_dist**2 + v_dist**2) + col_penalty
+            
+            if dist < min_dist:
+                min_dist = dist
+                best_q = q
+        
+        if best_q:
+            best_q['matched_imgs'].append(img['path'])
 
-        elif file_ext == 'pdf':
-            pdf_doc = fitz.open(stream=file_bytes, filetype="pdf")
-            for page_num in range(len(pdf_doc)):
-                if status_text:
-                    status_text.info(f"⚙️ 正在精细解析 {file.name} 的第 {page_num + 1}/{len(pdf_doc)} 页 ...")
-                
-                page = pdf_doc.load_page(page_num)
-                pix = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5))
-                temp_img_path = os.path.join(temp_dir, f"pdf_{file.name}_page_{page_num}.jpg")
-                pix.save(temp_img_path)
-                pix = None 
-                gc.collect()
-                
-                qs, imgs = smart_ocr_and_split(temp_img_path, temp_dir, pdf_page=page)
-                for q in qs: all_items.append({'type': 'q', 'page': global_page_idx, 'col': q['col'], 'y': q['y_min'], 'data': q})
-                for img in imgs: all_items.append({'type': 'img', 'page': global_page_idx, 'col': img['col'], 'y': img['y_center'], 'data': img})
-                global_page_idx += 1
-
-        elif file_ext == 'docx':
-            doc = docx.Document(io.BytesIO(file_bytes))
-            current_q = None
-            for para in doc.paragraphs:
-                text = para.text.strip()
-                if not text: continue
-                if re.match(r'^\s*\d+[\.．、](?!\d)', text):
-                    if current_q: all_items.append({'type': 'q', 'page': global_page_idx, 'col': 0, 'y': 0, 'data': current_q})
-                    current_q = {'text': text, 'matched_imgs':[]}
-                else:
-                    if current_q: current_q['text'] += '\n' + text
-            if current_q: all_items.append({'type': 'q', 'page': global_page_idx, 'col': 0, 'y': 0, 'data': current_q})
-            global_page_idx += 1
-
-    all_items.sort(key=lambda x: (x['page'], x['col'], x['y']))
-    
-    final_questions =[]
-    current_q_ref = None
-    
-    for item in all_items:
-        if item['type'] == 'q':
-            current_q_ref = item['data']
-            final_questions.append(current_q_ref)
-        elif item['type'] == 'img':
-            if current_q_ref:
-                current_q_ref['matched_imgs'].append(item['data']['path'])
-            elif len(final_questions) > 0:
-                final_questions[-1]['matched_imgs'].append(item['data']['path'])
-
-    return final_questions
+    return questions
 
 # ==========================================
-# PPT 渲染排版引擎 (智能多图排版布局)
+# 4. PPT 渲染引擎 (保持你的精美样式)
 # ==========================================
-def set_font(run, font_name='微软雅黑'):
+def set_font_all(run, font_name='微软雅黑'):
     run.font.name = font_name
     rPr = run._r.get_or_add_rPr()
     f = rPr.find(qn('w:rFonts'))
@@ -284,166 +228,91 @@ def set_font(run, font_name='微软雅黑'):
         rPr.append(f)
     f.set(qn('w:eastAsia'), font_name)
 
-def create_base_slide(prs, title_text):
+def create_slide(prs, title):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
+    # 背景装饰
     bg = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, prs.slide_width, prs.slide_height)
-    bg.fill.solid(); bg.fill.fore_color.rgb = RGBColor(245, 247, 250); bg.line.fill.background()
-    bar = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.4), Inches(0.4), Inches(0.12), Inches(0.55))
-    bar.fill.solid(); bar.fill.fore_color.rgb = RGBColor(0, 112, 192); bar.line.fill.background()
-    tb = slide.shapes.add_textbox(Inches(0.6), Inches(0.32), Inches(11.5), Inches(0.8))
-    p = tb.text_frame.paragraphs[0]; p.text = title_text
-    p.font.bold = True; p.font.size = Pt(26); p.font.color.rgb = RGBColor(30, 40, 60); set_font(p.runs[0])
+    bg.fill.solid(); bg.fill.fore_color.rgb = RGBColor(250, 250, 252); bg.line.fill.background()
+    # 标题栏
+    tb = slide.shapes.add_textbox(Inches(0.5), Inches(0.3), Inches(10), Inches(0.6))
+    p = tb.text_frame.paragraphs[0]; p.text = title
+    p.font.bold = True; p.font.size = Pt(24); p.font.color.rgb = RGBColor(20, 40, 80)
+    set_font_all(p.runs[0])
     return slide
 
-def add_badge_card(slide, x, y, w, h, badge_text, badge_color, content, font_size, line_spacing=1.3):
-    card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, x, y, w, h)
-    card.fill.solid(); card.fill.fore_color.rgb = RGBColor(255, 255, 255); card.line.color.rgb = RGBColor(230, 230, 235)
-    badge = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, x + Inches(0.2), y + Inches(0.15), Inches(1.2), Inches(0.35))
-    badge.fill.solid(); badge.fill.fore_color.rgb = badge_color; badge.line.fill.background()
-    bp = badge.text_frame.paragraphs[0]; bp.text = badge_text; bp.font.bold = True; bp.font.size = Pt(12)
-    bp.font.color.rgb = RGBColor(255, 255, 255); bp.alignment = PP_ALIGN.CENTER; set_font(bp.runs[0])
-    
-    tb = slide.shapes.add_textbox(x + Inches(0.1), y + Inches(0.55), w - Inches(0.2), h - Inches(0.6))
-    tf = tb.text_frame; tf.word_wrap = True; tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
-    for i, line in enumerate(content.split('\n')):
-        p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
-        p.text = line; p.font.size = Pt(font_size); p.font.color.rgb = RGBColor(30, 30, 30); p.line_spacing = line_spacing; set_font(p.runs[0])
-
-def render_images_on_slide(slide, img_paths):
-    if not img_paths: return
-    num_imgs = len(img_paths)
-    start_y = 1.2
-    
-    target_width = 4.0 if num_imgs == 1 else (3.8 if num_imgs == 2 else 3.0)
-
-    for img_path in img_paths:
-        try:
-            pic = slide.shapes.add_picture(img_path, Inches(8.9), Inches(start_y), width=Inches(target_width))
-            pic_height_in = pic.height / 914400.0 
-            
-            if start_y + pic_height_in > 7.3:
-                pic.height = int((7.3 - start_y) * 914400)
-                pic.width = int(pic.height * (Image.open(img_path).width / Image.open(img_path).height))
-                pic_height_in = pic.height / 914400.0
-                
-            start_y += pic_height_in + 0.15 
-        except Exception as e:
-            print(f"Error rendering image: {e}")
-
-def make_master_ppt(questions_data, status_text=None, progress_bar=None):
+def render_ppt(questions, output_buffer):
     prs = Presentation()
     prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
-    c_blue, c_orange = RGBColor(0, 112, 192), RGBColor(230, 90, 40)
-    global_idx = 1
-    total_q = len(questions_data)
-
-    for q_idx, q in enumerate(questions_data):
-        if status_text:
-            status_text.info(f"🎨 正在渲染排版第 {q_idx + 1}/{total_q} 题 PPT页面...")
-        if progress_bar:
-            progress_bar.progress(60 + int((q_idx / total_q) * 35))
-
-        matched_imgs = q.get('matched_imgs',[])
-        has_imgs = len(matched_imgs) > 0
-        text_w = Inches(8.3) if has_imgs else Inches(12.0)
-        visual_lines = q['text'].count('\n') + (len(q['text']) / 32)
-        q_font, q_space = (14, 1.2) if visual_lines > 15 else ((16, 1.3) if visual_lines > 10 else (18, 1.4))
-
-        if len(q['text']) > 120:
-            slide1 = create_base_slide(prs, f"习题精讲 - 第 {global_idx} 题")
-            add_badge_card(slide1, Inches(0.4), Inches(1.2), text_w, Inches(5.8), "原题呈现", c_blue, q['text'], q_font, q_space)
-            render_images_on_slide(slide1, matched_imgs)
-            
-            slide2 = create_base_slide(prs, f"习题精讲 - 第 {global_idx} 题 (解析)")
-            add_badge_card(slide2, Inches(0.4), Inches(1.2), text_w, Inches(5.8), "深度解析", c_orange, "待补充解析过程...", 18, 1.4)
-            render_images_on_slide(slide2, matched_imgs)
-        else:
-            slide = create_base_slide(prs, f"习题精讲 - 第 {global_idx} 题")
-            add_badge_card(slide, Inches(0.4), Inches(1.2), text_w, Inches(4.0), "原题呈现", c_blue, q['text'], q_font, q_space)
-            add_badge_card(slide, Inches(0.4), Inches(5.4), text_w, Inches(1.8), "深度解析", c_orange, "待补充解析过程...", 16, 1.3)
-            render_images_on_slide(slide, matched_imgs)
-            
-        global_idx += 1
-
-    ppt_buffer = io.BytesIO()
-    prs.save(ppt_buffer)
-    ppt_buffer.seek(0)
-    return ppt_buffer
-
-# ==========================================
-# Streamlit 现代化 Web UI
-# ==========================================
-st.set_page_config(page_title="AI 物理/生物教研课件工作站", layout="centered", page_icon="⚛️")
-
-if 'app_state' not in st.session_state:
-    st.session_state['app_state'] = 'idle'
-if 'ready_ppt' not in st.session_state:
-    st.session_state['ready_ppt'] = None
-
-st.markdown("""
-<div style='text-align: center; margin-bottom: 30px;'>
-    <h1 style='color: #0070C0;'>🚀 AI 教研全自动工作站</h1>
-    <p style='color: #666;'>支持同时上传多张 <b>教辅照片 / PDF / Word文档</b>，一键生成带有视觉配图与自动分页的巅峰排版 PPT。</p>
-</div>
-""", unsafe_allow_html=True)
-
-uploaded_files = st.file_uploader(
-    "📥 拖拽上传题库资料（已开启全局模型缓存，批量处理不卡顿！）",
-    accept_multiple_files=True,
-    type=['jpg', 'jpeg', 'png', 'pdf', 'docx']
-)
-
-if st.button("✨ 一键生成精美 PPT", type="primary", use_container_width=True):
-    if not uploaded_files:
-        st.warning("⚠️ 老师，请先上传文件哦！")
-    else:
-        st.session_state['app_state'] = 'processing'
-        try:
-            st.rerun()
-        except AttributeError:
-            st.experimental_rerun()
-
-if st.session_state['app_state'] == 'processing':
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    status_text.info("⚙️ 正在唤醒 OpenCV 深度形态学引擎...")
     
-    try:
-        # 预热全局模型，避免第一次提示卡顿
-        get_ocr_engine()
+    for i, q in enumerate(questions):
+        slide = create_slide(prs, f"习题精讲 第 {i+1} 题")
+        
+        # 文本框位置
+        has_img = len(q['matched_imgs']) > 0
+        txt_width = Inches(8.0) if has_img else Inches(12.0)
+        
+        # 绘制题干卡片
+        shape = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.5), Inches(1.2), txt_width, Inches(5.5))
+        shape.fill.solid(); shape.fill.fore_color.rgb = RGBColor(255, 255, 255)
+        shape.line.color.rgb = RGBColor(200, 200, 200)
+        
+        tf = shape.text_frame
+        tf.word_wrap = True
+        tf.margin_top = Inches(0.2)
+        p = tf.paragraphs[0]
+        p.text = q['text']
+        p.font.size = Pt(18)
+        p.font.color.rgb = RGBColor(40, 40, 40)
+        set_font_all(p.runs[0])
 
-        with tempfile.TemporaryDirectory() as temp_dir:
-            # 【将 UI 控件传入引擎，实现进度实时播报】
-            final_questions = process_uploaded_files(uploaded_files, temp_dir, status_text, progress_bar)
+        # 绘制图片
+        if has_img:
+            img_y = 1.2
+            for img_p in q['matched_imgs'][:2]: # 最多放两张图，防止重叠
+                try:
+                    pic = slide.shapes.add_picture(img_p, Inches(8.8), Inches(img_y), width=Inches(4.0))
+                    img_y += (pic.height / 914400) + 0.2
+                except:
+                    pass
+                    
+    prs.save(output_buffer)
 
-            if not final_questions:
-                status_text.error("❌ 抱歉，未能识别到有效题目，请检查图片或PDF内容。")
-                st.session_state['app_state'] = 'error'
-            else:
-                ppt_io = make_master_ppt(final_questions, status_text, progress_bar)
-                
-                st.session_state['ready_ppt'] = ppt_io.getvalue()
-                st.session_state['app_state'] = 'success'
-                progress_bar.progress(100)
-                
-        try:
-            st.rerun()
-        except AttributeError:
-            st.experimental_rerun()
+# ==========================================
+# 5. Streamlit UI 层
+# ==========================================
+st.set_page_config(page_title="物理习题 PPT 自动化", layout="wide")
+st.title("⚛️ 物理习题教研课件自动生成器")
+
+uploaded_files = st.file_uploader("上传图片或 PDF", accept_multiple_files=True, type=['png', 'jpg', 'pdf'])
+
+if st.button("开始转换", type="primary"):
+    if not uploaded_files:
+        st.error("请先上传文件")
+    else:
+        all_qs = []
+        with tempfile.TemporaryDirectory() as tmpdir:
+            progress = st.progress(0)
+            for idx, file in enumerate(uploaded_files):
+                st.write(f"正在处理: {file.name}")
+                if file.name.endswith('.pdf'):
+                    doc = fitz.open(stream=file.read(), filetype="pdf")
+                    for p_idx, page in enumerate(doc):
+                        pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+                        img_path = os.path.join(tmpdir, f"tmp_{idx}_{p_idx}.png")
+                        pix.save(img_path)
+                        qs = smart_process(img_path, tmpdir, pdf_page=page)
+                        all_qs.extend(qs)
+                else:
+                    img_path = os.path.join(tmpdir, file.name)
+                    with open(img_path, "wb") as f: f.write(file.read())
+                    qs = smart_process(img_path, tmpdir)
+                    all_qs.extend(qs)
+                progress.progress((idx + 1) / len(uploaded_files))
             
-    except Exception as e:
-        progress_bar.empty()
-        status_text.error(f"❌ 运行过程中发生崩溃：")
-        import traceback
-        st.code(traceback.format_exc())
-        st.session_state['app_state'] = 'error'
-
-if st.session_state['app_state'] == 'success' and st.session_state['ready_ppt']:
-    st.success("🎉 大功告成！多图批量解析完毕，画质极速渲染成功！请点击下方按钮下载！")
-    st.download_button(
-        label="⬇️ 点击这里下载生成的 PPT 课件",
-        data=st.session_state['ready_ppt'],
-        file_name="核心素养习题精讲(极速批处理版).pptx",
-        mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        use_container_width=True
-    )
+            if all_qs:
+                buf = io.BytesIO()
+                render_ppt(all_qs, buf)
+                st.success(f"成功解析 {len(all_qs)} 道题目！")
+                st.download_button("下载 PPT 课件", buf.getvalue(), "课件.pptx", "application/vnd.ms-powerpoint")
+            else:
+                st.error("未能识别出题目，请检查图片清晰度")
