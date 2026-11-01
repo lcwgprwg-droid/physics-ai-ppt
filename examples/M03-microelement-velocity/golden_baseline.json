@@ -1,0 +1,55 @@
+{
+  "baseline_name": "M03 V1.1 full-stable",
+  "module_id": "M03",
+  "accepted_version": "V1.1",
+  "artifact_policy": "Binary PPT/PDF assets are not committed by this text-only connector; hashes and acceptance metadata are recorded here as the Golden Baseline contract.",
+  "expected": {
+    "slide_count": 38,
+    "lesson_duration_min": 90,
+    "required_examples": 6,
+    "required_note_items": 14,
+    "missing_media_relationships": 0,
+    "out_of_bounds_objects": 0,
+    "render_qa": "passed",
+    "contact_sheet_review": "passed"
+  },
+  "compatibility_decisions": {
+    "formula_default": "self-contained raster image for display math; no SVG as default",
+    "fragile_diagrams": "use native PowerPoint shapes when transparent-image cropping is a risk",
+    "native_shape_pages": [1, 7, 9],
+    "reason": "Earlier transparent images on the cover and micro-displacement page were clipped on iPhone/PowerPoint; small-angle diagram was proactively converted to native geometry."
+  },
+  "artifact_fingerprints": {
+    "pptx": {
+      "filename": "M03_微元法求速度_90min课堂课件_V1.1_全页稳定版.pptx",
+      "sha256": "528bc00bb6ab47064cd14ebdfbc114776c88de0d0aa50da9b36ad13df25e5914",
+      "size_bytes": 572897
+    },
+    "rendered_pdf": {
+      "filename": "M03_微元法求速度_90min课堂课件_V1.1_全页稳定版.pdf",
+      "sha256": "c9102d97fba85274441f65c5b40d1be55f9c83dd6bac9481dc58ef4a475a7023",
+      "size_bytes": 1301256
+    },
+    "contact_sheet": {
+      "filename": "M03_V1.1_38页巡检总览.png",
+      "sha256": "a229889aeca60a34f53a5f9c47ccacbca876919f991150a68e7d0b51b18c1850",
+      "size_bytes": 569337
+    }
+  },
+  "release_gates": [
+    "notes_coverage_100_percent",
+    "all_6_examples_present",
+    "source_gap_examples_not_invented",
+    "all_source_diagrams_redrawn",
+    "small_angle_relation_present",
+    "sine_law_2R_present",
+    "cosine_law_present",
+    "example6_circumcircle_bridge_present",
+    "formula_safe_zone",
+    "diagram_first_layout",
+    "no_missing_media_relationships",
+    "no_out_of_bounds_objects",
+    "ppt_render_compatibility",
+    "full_deck_contact_sheet_review"
+  ]
+}
