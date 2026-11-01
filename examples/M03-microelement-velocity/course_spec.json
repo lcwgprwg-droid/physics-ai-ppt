@@ -1,0 +1,45 @@
+{
+  "schema_version": "1.0",
+  "module_id": "M03",
+  "lesson_no": 3,
+  "title": "微元法求速度——连续约束中的瞬时几何关系",
+  "source": "物竞2024年11月12日 微元法速度.pdf",
+  "duration_min": 90,
+  "source_boundary": "3页原始手写笔记=本节90分钟课程边界；不得擅自拆课",
+  "core_question": "当构件、绳、影子、交点等位置关系不断变化时，怎样利用极短时间内的微小位移几何关系求瞬时速度？",
+  "lesson_flow": [
+    {"time":"0–10","topic":"速度的矢量表示","content":"x-y平面速度分量；位置矢量求导；三维扩展"},
+    {"time":"10–20","topic":"三角函数工具补充","content":"单位圆、角变换、90°/180°关系"},
+    {"time":"20–27","topic":"小角近似","content":"θ→0，sinθ≈θ≈tanθ；为微元几何做准备"},
+    {"time":"27–34","topic":"微元法求速度的一般步骤","content":"取δt→0；画前后位置；把小位移转成速度；用几何约束关联"},
+    {"time":"34–43","topic":"例1","content":"微元位移三角形求A点速度"},
+    {"time":"43–52","topic":"例2","content":"绳/杆约束下的速度关系"},
+    {"time":"52–61","topic":"例3","content":"复合约束中A点速度"},
+    {"time":"61–69","topic":"例4","content":"影子运动速度与相似三角形"},
+    {"time":"69–78","topic":"例5","content":"θ不变条件下的速度分量与合成"},
+    {"time":"78–83","topic":"正弦/余弦定理工具回收","content":"外接圆形式2R；为最后综合题服务"},
+    {"time":"83–90","topic":"例6综合","content":"两运动构件交点C速度；微元几何+圆几何+正弦/余弦定理"}
+  ],
+  "visual_requirements": [
+    "所有6个例题必须重绘原笔记几何图，不得只放公式",
+    "例题推导按：原位置→δt后位置→微元位移→几何关系→速度关系",
+    "小角近似必须画单位圆/小三角形示意",
+    "例6必须保留四点共圆与外接圆2R的几何桥梁"
+  ],
+  "problem_policy": {
+    "complete_stem_required": true,
+    "source_gap_rule": "若原笔记未写完整 verbal stem，不得臆造；保留图示与笔记已给条件，并标注‘依据原笔记图意整理’",
+    "examples_count": 6
+  },
+  "golden_gates": [
+    "notes_coverage_100_percent",
+    "all_6_examples_present",
+    "all_source_diagrams_redrawn",
+    "small_angle_relation_present",
+    "sine_law_2R_present",
+    "cosine_law_present",
+    "example6_circumcircle_bridge_present",
+    "formula_safe_zone",
+    "ppt_render_compatibility"
+  ]
+}
