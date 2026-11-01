@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "module_id": "M03",
   "lesson_no": 3,
   "title": "微元法求速度——连续约束中的瞬时几何关系",
@@ -7,6 +7,16 @@
   "duration_min": 90,
   "source_boundary": "3页原始手写笔记=本节90分钟课程边界；不得擅自拆课",
   "core_question": "当构件、绳、影子、交点等位置关系不断变化时，怎样利用极短时间内的微小位移几何关系求瞬时速度？",
+  "stable_baseline": {
+    "version": "V1.1",
+    "slide_count": 38,
+    "status": "accepted_stable_baseline",
+    "render_qa": "passed",
+    "missing_media_relationships": 0,
+    "out_of_bounds_objects": 0,
+    "native_shape_risk_pages": [1, 7, 9],
+    "note": "第1页、第9页微元示意图以及第7页小角近似图使用PPT原生图形，避免透明图片裁切风险。"
+  },
   "lesson_flow": [
     {"time":"0–10","topic":"速度的矢量表示","content":"x-y平面速度分量；位置矢量求导；三维扩展"},
     {"time":"10–20","topic":"三角函数工具补充","content":"单位圆、角变换、90°/180°关系"},
@@ -24,7 +34,9 @@
     "所有6个例题必须重绘原笔记几何图，不得只放公式",
     "例题推导按：原位置→δt后位置→微元位移→几何关系→速度关系",
     "小角近似必须画单位圆/小三角形示意",
-    "例6必须保留四点共圆与外接圆2R的几何桥梁"
+    "例6必须保留四点共圆与外接圆2R的几何桥梁",
+    "透明边界较大的示意图不得作为关键课堂图；优先使用PPT原生图形或已通过裁切QA的自包含图片",
+    "公式视觉权重服从图示与推导，不得用巨型公式替代几何解释"
   ],
   "problem_policy": {
     "complete_stem_required": true,
@@ -40,6 +52,11 @@
     "cosine_law_present",
     "example6_circumcircle_bridge_present",
     "formula_safe_zone",
-    "ppt_render_compatibility"
+    "diagram_first_layout",
+    "native_shape_for_fragile_diagrams",
+    "no_missing_media_relationships",
+    "no_out_of_bounds_objects",
+    "ppt_render_compatibility",
+    "full_deck_contact_sheet_review"
   ]
 }
