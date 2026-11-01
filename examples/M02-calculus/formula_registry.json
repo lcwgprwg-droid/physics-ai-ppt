@@ -1,0 +1,12 @@
+[
+  {"id":"F01","role":"average_velocity","latex":"\\bar v=\\frac{\\Delta x}{\\Delta t}","level":"derivation"},
+  {"id":"F02","role":"instantaneous_velocity","latex":"v(t)=\\lim_{\\Delta t\\to0}\\frac{x(t+\\Delta t)-x(t)}{\\Delta t}","level":"core"},
+  {"id":"F03","role":"velocity_derivative","latex":"v(t)=\\frac{\\mathrm{d}x}{\\mathrm{d}t}","level":"core"},
+  {"id":"F04","role":"acceleration_derivative","latex":"a(t)=\\frac{\\mathrm{d}v}{\\mathrm{d}t}=\\frac{\\mathrm{d}^2x}{\\mathrm{d}t^2}","level":"derivation"},
+  {"id":"F05","role":"speed_sign_rule","latex":"av>0\\Rightarrow |v|\\text{增大},\\quad av<0\\Rightarrow |v|\\text{减小}","level":"derivation","note":"仅用于一维且避开 v=0 瞬间的简单机械判断"},
+  {"id":"F06","role":"finite_increment","latex":"\\Delta x\\approx v(t)\\Delta t","level":"derivation"},
+  {"id":"F07","role":"differential_relation","latex":"\\mathrm{d}x=v(t)\\,\\mathrm{d}t","level":"derivation"},
+  {"id":"F08","role":"displacement_integral","latex":"x(t)-x(t_0)=\\int_{t_0}^{t}v(t)\\,\\mathrm{d}t","level":"core","pedagogy":"按教师要求课堂统一 t"},
+  {"id":"F09","role":"velocity_from_acceleration","latex":"v(t)-v(t_0)=\\int_{t_0}^{t}a(t)\\,\\mathrm{d}t","level":"derivation"},
+  {"id":"F10","role":"distance","latex":"s=\\int_{t_1}^{t_2}|v(t)|\\,\\mathrm{d}t","level":"derivation"}
+]
