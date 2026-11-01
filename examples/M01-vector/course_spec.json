@@ -1,0 +1,66 @@
+{
+  "schema_version": "1.0",
+  "module_id": "M01",
+  "lesson_no": 1,
+  "title": "向量——竞赛物理的数学语言",
+  "duration_min": 90,
+  "source_boundary": "M01 V1.3 已验证课程内容作为本次重制的内容母版；V2.0 只重构课堂结构、视觉、题干与兼容性，不擅自扩展知识范围。",
+  "stable_baseline": {
+    "version": "V2.0",
+    "slide_count": 40,
+    "classroom_slides": "1-37",
+    "teacher_appendix": "38-40",
+    "missing_media_relationships": 0,
+    "out_of_bounds_objects": 0,
+    "render_qa": "passed",
+    "contact_sheet_review": "passed"
+  },
+  "required_content": [
+    "scalar_vector_difference",
+    "position_vector",
+    "displacement",
+    "free_vector_translation_boundary",
+    "components_and_unit_vectors",
+    "two_and_three_dimensional_vectors",
+    "vector_addition_and_subtraction",
+    "resultant_magnitude_range",
+    "decomposition_and_projection",
+    "dot_product_geometric_and_coordinate_forms",
+    "work_as_dot_product",
+    "cosine_law_vector_derivation",
+    "cross_product",
+    "area_from_cross_product",
+    "torque_entry_and_reference_point_dependency",
+    "dot_vs_cross_comparison",
+    "motion_vector_preview"
+  ],
+  "problem_policy": {
+    "complete_stem_required": true,
+    "classroom_short_exercises": 3,
+    "layered_homework_target": 8
+  },
+  "design_rules": [
+    "student_facing_main_flow",
+    "teacher_metadata_in_appendix",
+    "native_shapes_for_core_diagrams",
+    "formula_safe_zone",
+    "diagram_first_layout",
+    "complete_problem_stems",
+    "idea_steps_conclusion_for_derivations",
+    "no_giant_formula_plus_tiny_text"
+  ],
+  "golden_gates": [
+    "content_coverage_100_percent",
+    "single_90_minute_lesson",
+    "three_complete_classroom_exercises",
+    "position_vector_boundary_correct",
+    "force_torque_reference_point_dependency_present",
+    "dot_and_cross_physical_meaning_present",
+    "formula_safe_zone",
+    "native_shape_for_core_diagrams",
+    "no_missing_media_relationships",
+    "no_out_of_bounds_objects",
+    "ppt_render_compatibility",
+    "full_deck_contact_sheet_review"
+  ]
+}
