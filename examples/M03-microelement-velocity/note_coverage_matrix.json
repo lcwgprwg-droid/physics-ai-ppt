@@ -1,0 +1,16 @@
+[
+  {"page":1,"id":"P1-01","topic":"x-y平面速度表示法","source_detail":"v(t)由位置矢量r(t)对时间求导；分解到x、y方向","status":"required","confidence":"high"},
+  {"page":1,"id":"P1-02","topic":"三维速度分量扩展","source_detail":"加入z方向分量，写成i,j,k三个方向的速度分量","status":"required","confidence":"high"},
+  {"page":1,"id":"P1-03","topic":"单位圆与三角函数补充","source_detail":"A(r,θ)，r=1；cos/sin坐标关系；θ±π/2、θ+π、π-θ、-θ等变换","status":"required","confidence":"high"},
+  {"page":1,"id":"P1-04","topic":"小角近似","source_detail":"θ→0；单位圆上θ=l/r=l；sinθ≈θ≈tanθ；配几何示意","status":"required","confidence":"high"},
+  {"page":1,"id":"P1-05","topic":"例1：微元位移三角形求A点速度","source_detail":"由AA'、vδt、sinθ关系得到速度表达；原笔记 verbal stem 未完整写出","status":"required","confidence":"medium","stem_status":"diagram_and_derivation_only"},
+  {"page":1,"id":"P1-06","topic":"例2：绳/杆约束速度关系","source_detail":"图中O点、P点与α角；用δt→0与几何关系求v_P；原笔记 verbal stem 未完整写出","status":"required","confidence":"medium","stem_status":"diagram_and_derivation_only"},
+  {"page":2,"id":"P2-01","topic":"例2续：微元三角形关系","source_detail":"PQ=vδt，P'P与cosα相关，继续完成速度关系","status":"required","confidence":"high"},
+  {"page":2,"id":"P2-02","topic":"例3：求A约束速度","source_detail":"图示滑块/杆约束；用伸长/缩短的小量关系推得v_A=v/(1+cosα)","status":"required","confidence":"high","stem_status":"diagram_and_question_present"},
+  {"page":2,"id":"P2-03","topic":"例4：影子运动速度","source_detail":"高度H、h的相似三角形；求影子点P速度，得到v_P=H/(H-h)·v","status":"required","confidence":"high"},
+  {"page":2,"id":"P2-04","topic":"例5：θ不变时小球/点A速度","source_detail":"分解微元位移到x、y方向，再合成速度；笔记得到v_A=v0√[2(1+sinθ)]","status":"required","confidence":"high"},
+  {"page":3,"id":"P3-01","topic":"正弦定理与外接圆形式","source_detail":"a/sinA=b/sinB=c/sinC=2R；圆内接图证明/说明","status":"required","confidence":"high"},
+  {"page":3,"id":"P3-02","topic":"余弦定理复习","source_detail":"c²=a²+b²−2ab cosC","status":"required","confidence":"high"},
+  {"page":3,"id":"P3-03","topic":"例6：两运动构件交点C的速度","source_detail":"A、B两方向运动，交点C；微元点m,n,m',n'；四点共圆/外接圆；求v_C大小","status":"required","confidence":"high"},
+  {"page":3,"id":"P3-04","topic":"例6核心速度公式","source_detail":"笔记写出v_C与v_A、v_B、θ、φ的关系，并通过圆几何/正弦定理完成推导","status":"required","confidence":"high"}
+]
