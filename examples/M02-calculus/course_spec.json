@@ -1,0 +1,125 @@
+{
+  "schema_version": "1.1",
+  "golden_test": true,
+  "module_id": "M02",
+  "lesson_number": 2,
+  "theme": "数学工具与连续运动的语言",
+  "title": "高中物理竞赛第二节——数学工具与连续运动的语言",
+  "duration_min": 90,
+  "audience": "高中物理竞赛 / 强基过渡",
+  "source_boundary": {
+    "teacher_notes_are_lesson_boundary": true,
+    "note_pages": 4,
+    "required_coverage_percent": 100,
+    "allow_silent_split_to_next_lesson": false
+  },
+  "modules": [
+    {
+      "id": "M02-A",
+      "title": "向量与三角工具",
+      "required_items": [
+        "点乘与叉乘",
+        "三维单位向量",
+        "弧度制",
+        "正弦定理",
+        "余弦定理及向量证明",
+        "三角函数和差公式及减法公式推导",
+        "点乘坐标形式证明"
+      ]
+    },
+    {
+      "id": "M02-B",
+      "title": "坐标系与运动的函数语言",
+      "required_items": [
+        "直角坐标",
+        "极坐标",
+        "三维坐标系/柱坐标/球坐标的选择思想",
+        "位置矢量与位移",
+        "位置函数 x(t)",
+        "平均速度与瞬时速度"
+      ]
+    },
+    {
+      "id": "M02-C",
+      "title": "微积分入口",
+      "required_items": [
+        "极限",
+        "导数的数学/几何/物理三种语言",
+        "x→v→a",
+        "有限增量与微分",
+        "积分与 v-t 图面积",
+        "位移与路程",
+        "初值与积分常数"
+      ]
+    },
+    {
+      "id": "M02-D",
+      "title": "微元法与综合应用",
+      "required_items": [
+        "常用求和公式",
+        "蚂蚁上树完整题干",
+        "图像积分法",
+        "离散求和法",
+        "等分→每段时间→代入→求和→取极限",
+        "圆内接三角形中的正弦定理与 2R"
+      ]
+    }
+  ],
+  "notation": {
+    "time": "t",
+    "position": "x(t)",
+    "velocity": "v(t)",
+    "acceleration": "a(t)",
+    "differential_operator": "\\mathrm{d}",
+    "classroom_integral_notation": "x(t)-x(t_0)=\\int_{t_0}^{t}v(t)\\,\\mathrm{d}t",
+    "polar_coordinates": "A(r,\\theta)",
+    "cartesian_coordinates": "A(x,y)",
+    "note": "课堂统一使用 t；若必须引入哑变量，仅在教师母稿解释。"
+  },
+  "formula_levels": {
+    "inline": "≈正文视觉高度",
+    "derivation": "≈正文1.2–1.5倍",
+    "core": "通常≤正文1.7倍"
+  },
+  "hard_layout_rules": [
+    "一页一个视觉中心",
+    "禁止超大公式+小字解释",
+    "公式安全区不得被批注/正文/图像侵入",
+    "正式公式不用手写字体",
+    "蓝色手写风仅用于批注/箭头/圈画",
+    "图轴变量使用数学字体",
+    "多个公式优先纵向分层",
+    "可视化概念优先补图而不是放大公式",
+    "推导页采用思路→步骤→结论",
+    "题干页以完整可读为第一优先级"
+  ],
+  "required_visuals": [
+    "弧度圆弧图",
+    "三角形/圆内接三角形图",
+    "直角坐标与极坐标图",
+    "三维坐标系示意",
+    "割线趋近切线图",
+    "x/v/a 图像关系",
+    "Riemann 小矩形/积分面积图",
+    "v-t 正负面积图",
+    "蚂蚁上树物理图景"
+  ],
+  "problem_stem_policy": {
+    "complete_context": true,
+    "known_conditions": true,
+    "symbol_definitions": true,
+    "interval_or_range_when_needed": true,
+    "positive_direction_when_needed": true,
+    "explicit_questions": true,
+    "label_supplement_questions": true
+  },
+  "compatibility_gates": {
+    "default_formula_format": "self-contained high-resolution transparent raster",
+    "svg_default": false,
+    "missing_media_targets": 0,
+    "out_of_bounds_objects": 0,
+    "full_deck_render_required": true
+  },
+  "accepted_visual_baseline": "M02 V1.6.2",
+  "release_status": "GOLDEN"
+}
