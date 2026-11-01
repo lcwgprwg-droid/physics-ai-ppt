@@ -1,0 +1,12 @@
+[
+  {"id":"M01-01","source":"V1.3 05-09","topic":"标量/向量、位置、位移、平移边界","new_slides":"3-7","status":"required"},
+  {"id":"M01-02","source":"V1.3 10-12","topic":"分量、单位向量、二维/三维","new_slides":"8-10","status":"required"},
+  {"id":"M01-03","source":"V1.3 13","topic":"课堂短练1：位置与位移","new_slides":"11","status":"required"},
+  {"id":"M01-04","source":"V1.3 14-17","topic":"向量加法、减法、合矢量范围、课堂短练2","new_slides":"12-15","status":"required"},
+  {"id":"M01-05","source":"V1.3 18-19","topic":"分解与投影","new_slides":"16-17","status":"required"},
+  {"id":"M01-06","source":"V1.3 20-25","topic":"点乘、功、余弦定理、课堂短练3","new_slides":"18-23","status":"required"},
+  {"id":"M01-07","source":"V1.3 26-30","topic":"叉乘、面积、力矩、点叉比较、分量式","new_slides":"24-28","status":"required"},
+  {"id":"M01-08","source":"V1.3 31-33","topic":"互动、综合挑战、运动学伏笔","new_slides":"29-31","status":"required"},
+  {"id":"M01-09","source":"V1.3 35-40","topic":"方法卡、易错、知识地图、Exit、作业、总结","new_slides":"32-37","status":"required"},
+  {"id":"M01-10","source":"V1.3 03-04,34","topic":"来源、课程边界与课程衔接","new_slides":"38-39","status":"required"}
+]

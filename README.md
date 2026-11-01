@@ -2,49 +2,13 @@
 
 AI-assisted production pipeline for high-school physics competition / Strong Foundation courseware.
 
-The project turns teacher handwritten notes (Notability/PDF/images) into a reproducible course package while preserving the teacher’s own lesson logic.
+The project turns teacher handwritten notes or accepted lesson masters into a reproducible course package while preserving the teacher’s own lesson logic.
 
 ## Core principle
 
-**Teacher notes are the lesson skeleton, not disposable input.**
+**Teacher notes / accepted lesson master define the lesson boundary.**
 
-If a note set is intended as one 90-minute lesson, the system must cover the meaningful content in that note set at 100% before release. External university physics / Olympiad / GitHub sources may verify or improve presentation, but they may not silently delete or replace teacher-note content.
-
-## What the pipeline produces
-
-- classroom PPT / PDF
-- teacher manuscript
-- student handout
-- Xournal++ board template
-- HTML / optional Manim visualization
-- layered exercises and problem bank
-- formula registry
-- note coverage matrix
-- QA report
-
-## Production pipeline
-
-```text
-Teacher notes / Notability / PDF
-        ↓
-page-by-page source reconstruction
-        ↓
-note_coverage_matrix.json   (must reach 100%)
-        ↓
-course_spec.json + formula_registry.json
-        ↓
-physics/math QA
-        ↓
-semantic slide planning
-        ↓
-visual-first + formula-aware rendering
-        ↓
-PPT / handout / board / exercises / visualization
-        ↓
-media + layout + render compatibility QA
-        ↓
-RELEASE
-```
+If a source set is intended as one 90-minute lesson, the system must cover its meaningful content at 100% before release. External university physics / Olympiad / GitHub sources may verify or improve presentation, but they may not silently delete or replace source content.
 
 ## Stable design rules
 
@@ -58,7 +22,10 @@ RELEASE
 - complete problem stems before solution slides
 - formal equations use standard math typography
 - handwritten style is reserved for annotations/arrows/highlights
-- self-contained media; full-deck PDF/PNG render before release
+- prefer native PowerPoint shapes for fragile/core diagrams
+- student-facing classroom content stays in the main flow
+- teacher source/QA metadata goes to appendix when appropriate
+- full-deck PDF/PNG render before release
 
 ## Physics Courseware Skill
 
@@ -72,52 +39,102 @@ Supporting files:
 - `skills/physics-courseware-builder/references/QUALITY_GATES.md`
 - `skills/physics-courseware-builder/prompts/MASTER_PROMPT.md`
 
-## M02 Golden Test
+## Golden Baselines
 
-The first accepted baseline is **M02 — 高中物理竞赛第二节：数学工具与连续运动的语言**.
+### M01 — 向量
 
-The original four-page handwritten note set is treated as one 90-minute lesson and includes:
+Accepted baseline: **V2.0 稳定重制版**
 
-- dot/cross product and vector tools
-- radians
-- sine/cosine laws and vector proof
-- trig addition/subtraction formulas
-- Cartesian / polar / 3D coordinate-system discussion
-- position, displacement, average/instantaneous velocity
-- limit, derivative, `x -> v -> a`
-- differential/integral language
-- Riemann/area interpretation
-- summation formulas
-- ant-climbing-tree microelement example using both integral and discrete-limit routes
-- circumcircle form of the sine law
+Focus:
+- scalar/vector distinction
+- position vector and displacement
+- vector-translation boundary
+- components/unit vectors/2D/3D
+- addition/subtraction/resultant range
+- decomposition/projection
+- dot product/work/cosine-law derivation
+- cross product/area/torque entry
+- student-facing main flow + teacher appendix
+- native PowerPoint geometry for compatibility
 
-Golden configuration:
+Files:
+- `examples/M01-vector/course_spec.json`
+- `examples/M01-vector/coverage_matrix.json`
+- `examples/M01-vector/golden_baseline.json`
+- `tests/validate_m01_golden.py`
 
+Run:
+
+```bash
+python tests/validate_m01_golden.py
+```
+
+### M02 — 数学工具与连续运动的语言
+
+The original handwritten note set is treated as one 90-minute lesson and covers vector/trig tools, coordinate systems, limits, derivatives, integrals, summation and the ant-climbing-tree example.
+
+Files:
 - `examples/M02-calculus/course_spec.json`
 - `examples/M02-calculus/formula_registry.json`
 - `examples/M02-calculus/note_coverage_matrix.json`
 - `tests/validate_m02_golden.py`
 
-Run the Golden validator after modifying the skill/specification:
+Run:
 
 ```bash
 python tests/validate_m02_golden.py
 ```
 
-A stable release must not regress M02 note coverage, mathematical notation, layout rules, problem-stem completeness, or compatibility requirements.
+### M03 — 微元法求速度
+
+Accepted baseline: **V1.1 全页稳定版**
+
+Focus:
+- 3-page source set preserved as one 90-minute lesson
+- 6 examples preserved
+- geometric redraws
+- micro-displacement method
+- small-angle relation
+- sine-law `2R`, cosine law and circumcircle bridge
+- native-shape compatibility pages for fragile diagrams
+
+Files:
+- `examples/M03-microelement-velocity/course_spec.json`
+- `examples/M03-microelement-velocity/note_coverage_matrix.json`
+- `examples/M03-microelement-velocity/golden_baseline.json`
+- `tests/validate_m03_golden.py`
+
+Run:
+
+```bash
+python tests/validate_m03_golden.py
+```
+
+## Regression contract
+
+A renderer / skill / layout change is not considered safe unless it preserves all three accepted baselines:
+
+```bash
+python tests/validate_m01_golden.py
+python tests/validate_m02_golden.py
+python tests/validate_m03_golden.py
+```
+
+The three baselines intentionally stress different failure modes:
+
+- **M01:** vector geometry, native diagrams, student-facing lesson structure
+- **M02:** formula typography, calculus, complete stems, coordinate systems
+- **M03:** complex handwritten geometry, microelement derivations, image compatibility
 
 ## Roadmap
 
 1. Freeze specification and QA contract — **done**
-2. M02 Golden Test — **done**
-3. Second pressure test with a substantially different course (M03 microelement method or M01 vectors)
-4. Build `course_spec -> renderer -> PPT/PDF -> QA` automation
-5. Add reusable semantic layout components and automated overlap/media checks
+2. M01 / M02 / M03 Golden Baselines — **done**
+3. Build `course_spec -> renderer -> PPT/PDF -> QA` automation
+4. Add reusable semantic layout components
+5. Add automated overlap/media/render checks to CI
+6. Use M04 as the next unseen-course production test
 
 ## Repository status
 
-The current skill/golden-test work lives on branch:
-
-`test/physics-courseware-builder-m02`
-
-See the active pull request for review and integration status.
+Current Golden-Baseline work is being reviewed on dedicated test branches before integration into the default branch.
