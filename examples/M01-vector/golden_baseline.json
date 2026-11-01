@@ -1,0 +1,57 @@
+{
+  "baseline_name": "M01 V2.0 stable rebuild",
+  "module_id": "M01",
+  "accepted_version": "V2.0",
+  "artifact_policy": "Binary PPT/PDF assets are not committed by this text-only connector; hashes and acceptance metadata are recorded here as the Golden Baseline contract.",
+  "expected": {
+    "slide_count": 40,
+    "lesson_duration_min": 90,
+    "classroom_slides": "1-37",
+    "teacher_appendix": "38-40",
+    "required_content_items": 17,
+    "classroom_short_exercises": 3,
+    "missing_media_relationships": 0,
+    "out_of_bounds_objects": 0,
+    "render_qa": "passed",
+    "contact_sheet_review": "passed"
+  },
+  "artifact_fingerprints": {
+    "pptx": {
+      "filename": "M01_向量_90min课堂课件_V2.0_稳定重制版.pptx",
+      "sha256": "12a7950cebf341eca0a67f139e5d3471ce04048f40474138bbececca3fda1b4b",
+      "size_bytes": 309183
+    },
+    "rendered_pdf": {
+      "filename": "M01_向量_90min课堂课件_V2.0_稳定重制版.pdf",
+      "sha256": "70c16618430d7f654df6a401f27f5e704630885bfddb927b1eb9b27ecc1674a3",
+      "size_bytes": 1302675
+    },
+    "contact_sheet": {
+      "filename": "M01_V2.0_40页巡检总览.png",
+      "sha256": "bd272342341f9ce7bcf9cc059bbdd013dd0b139c52ac2cd8eaedc7cba5fed841",
+      "size_bytes": 635225
+    }
+  },
+  "compatibility_decisions": {
+    "formula_default": "self-contained raster image for display math; no SVG as default",
+    "core_diagrams": "prefer native PowerPoint shapes for arrows, coordinate axes, decomposition, projection, work, torque and vector geometry",
+    "reason": "M02/M03 testing showed native shapes are more robust across iPhone, WPS and PowerPoint than fragile transparent diagram images."
+  },
+  "release_gates": [
+    "content_coverage_100_percent",
+    "single_90_minute_lesson",
+    "student_facing_main_flow",
+    "teacher_metadata_in_appendix",
+    "three_complete_classroom_exercises",
+    "position_vector_boundary_correct",
+    "force_torque_reference_point_dependency_present",
+    "dot_and_cross_physical_meaning_present",
+    "formula_safe_zone",
+    "diagram_first_layout",
+    "native_shape_for_core_diagrams",
+    "no_missing_media_relationships",
+    "no_out_of_bounds_objects",
+    "ppt_render_compatibility",
+    "full_deck_contact_sheet_review"
+  ]
+}
