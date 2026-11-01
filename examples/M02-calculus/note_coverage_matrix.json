@@ -1,0 +1,45 @@
+{
+  "module_id": "M02",
+  "source": "teacher handwritten notes / 物理1105 / 4 pages",
+  "coverage_target_percent": 100,
+  "coverage_status": "GOLDEN",
+  "items": [
+    {"note_page": 1, "id": "P1-01", "type": "concept", "item": "点乘复习：投影、标量结果", "status": "covered"},
+    {"note_page": 1, "id": "P1-02", "type": "concept+diagram", "item": "叉乘及平行四边形面积意义", "status": "covered"},
+    {"note_page": 1, "id": "P1-03", "type": "coordinate", "item": "三维单位向量与分量表示", "status": "covered"},
+    {"note_page": 1, "id": "P1-04", "type": "geometry+formula", "item": "弧度制 theta=l/r 与常用角换算", "status": "covered"},
+    {"note_page": 1, "id": "P1-05", "type": "theorem", "item": "正弦定理 a/sinA=b/sinB=c/sinC", "status": "covered"},
+    {"note_page": 1, "id": "P1-06", "type": "theorem", "item": "余弦定理", "status": "covered"},
+    {"note_page": 1, "id": "P1-07", "type": "proof", "item": "余弦定理的向量证明：向量差→平方→点乘展开", "status": "covered"},
+    {"note_page": 1, "id": "P1-08", "type": "formula+derivation", "item": "三角函数加法公式", "status": "covered"},
+    {"note_page": 1, "id": "P1-09", "type": "derivation", "item": "由 alpha→-alpha 得到减法公式", "status": "covered"},
+    {"note_page": 1, "id": "P1-10", "type": "proof", "item": "点乘坐标形式及正交单位向量解释", "status": "covered"},
+
+    {"note_page": 2, "id": "P2-01", "type": "coordinate+diagram", "item": "直角坐标 A(x,y)", "status": "covered"},
+    {"note_page": 2, "id": "P2-02", "type": "coordinate+diagram", "item": "极坐标 A(r,theta) 与 x=r cos theta, y=r sin theta", "status": "covered"},
+    {"note_page": 2, "id": "P2-03", "type": "coordinate+diagram", "item": "三维坐标系及按对称性选择柱/球坐标的思想", "status": "covered"},
+    {"note_page": 2, "id": "P2-04", "type": "concept", "item": "位置矢量与位置函数", "status": "covered"},
+    {"note_page": 2, "id": "P2-05", "type": "concept", "item": "位移", "status": "covered"},
+    {"note_page": 2, "id": "P2-06", "type": "formula+graph", "item": "平均速度与割线斜率", "status": "covered"},
+    {"note_page": 2, "id": "P2-07", "type": "limit+graph", "item": "瞬时速度：时间区间缩小、割线趋近切线", "status": "covered"},
+    {"note_page": 2, "id": "P2-08", "type": "example", "item": "自由落体/运动学导数入口", "status": "covered"},
+
+    {"note_page": 3, "id": "P3-01", "type": "limit", "item": "导数极限定义", "status": "covered"},
+    {"note_page": 3, "id": "P3-02", "type": "derivation", "item": "x=t^2 的导数定义推导", "status": "covered"},
+    {"note_page": 3, "id": "P3-03", "type": "concept", "item": "导数的数学/几何/物理三种语言", "status": "covered"},
+    {"note_page": 3, "id": "P3-04", "type": "relation-map", "item": "x→v→a", "status": "covered"},
+    {"note_page": 3, "id": "P3-05", "type": "concept", "item": "有限增量与微分的区别", "status": "covered"},
+    {"note_page": 3, "id": "P3-06", "type": "integral", "item": "小量累加到积分", "status": "covered"},
+    {"note_page": 3, "id": "P3-07", "type": "graph", "item": "v-t 图有向面积与位移", "status": "covered"},
+    {"note_page": 3, "id": "P3-08", "type": "physics-qa", "item": "位移与路程、速度变号时的分段/绝对值", "status": "covered"},
+
+    {"note_page": 4, "id": "P4-01", "type": "formula", "item": "常用求和：sum i", "status": "covered"},
+    {"note_page": 4, "id": "P4-02", "type": "formula", "item": "常用求和：sum i^2", "status": "covered"},
+    {"note_page": 4, "id": "P4-03", "type": "formula", "item": "常用求和：sum i^3", "status": "covered"},
+    {"note_page": 4, "id": "P4-04", "type": "problem-stem", "item": "蚂蚁上树完整题干：L, v0, h, v(h)=Lv0/(L+h), 求总时间", "status": "covered"},
+    {"note_page": 4, "id": "P4-05", "type": "derivation", "item": "蚂蚁上树：1/v-h 线性关系", "status": "covered"},
+    {"note_page": 4, "id": "P4-06", "type": "integral+graph", "item": "蚂蚁上树图像积分法", "status": "covered"},
+    {"note_page": 4, "id": "P4-07", "type": "discrete-limit", "item": "蚂蚁上树离散法：等分→每段时间→代入→求和→取极限", "status": "covered"},
+    {"note_page": 4, "id": "P4-08", "type": "geometry+theorem", "item": "圆内接三角形与扩展正弦定理 =2R", "status": "covered"}
+  ]
+}
