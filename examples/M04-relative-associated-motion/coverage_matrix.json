@@ -1,0 +1,20 @@
+{
+  "module_id": "M04",
+  "required_note_items": 14,
+  "items": [
+    {"id":"P1-01","content":"承接例7：两等半径圆交点速度","slides":"4-8"},
+    {"id":"P1-02","content":"相对运动概念入口","slides":"9"},
+    {"id":"P2-01","content":"一维相对位置","slides":"10"},
+    {"id":"P2-02","content":"一维相对速度","slides":"11"},
+    {"id":"P2-03","content":"平移参考系位置/速度关系","slides":"12-13"},
+    {"id":"P2-04","content":"人向东、感风从北的概念例","slides":"15-16"},
+    {"id":"P2-05","content":"练习2-30 船—烟完整题干与解","slides":"17-20"},
+    {"id":"P3-01","content":"练习2-30 跑步者—风完整题干与解","slides":"21-24"},
+    {"id":"P3-02","content":"关联运动方法 Δt→0","slides":"26-27"},
+    {"id":"P3-03","content":"刚性杆/绳投影约束","slides":"28"},
+    {"id":"P3-04","content":"关联例1","slides":"29-30"},
+    {"id":"P3-05","content":"关联例2","slides":"31-32"},
+    {"id":"P3-06","content":"关联例3","slides":"33-34"},
+    {"id":"P3-07","content":"关联例4","slides":"35-36"}
+  ]
+}

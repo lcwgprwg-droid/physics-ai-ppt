@@ -1,0 +1,26 @@
+{
+  "module_id": "M04",
+  "title": "相对运动与关联运动",
+  "version": "V1.0",
+  "duration_min": 90,
+  "source": "2024-11-19 三页手写竞赛笔记",
+  "slides": 40,
+  "lesson_boundary": "one-note-set-one-lesson",
+  "sections": [
+    "承接例7：两等半径圆交点速度",
+    "相对位置与相对速度",
+    "平移参考系",
+    "船—烟风速题",
+    "跑步者—风速题",
+    "关联运动方法",
+    "刚性杆/不可伸长绳投影约束",
+    "4个关联运动例题",
+    "方法辨析与Exit Ticket"
+  ],
+  "source_gap_policy": "diagram-derived examples remain diagram-derived; missing stems must not be fabricated",
+  "compatibility": {
+    "missing_media_relationships": 0,
+    "out_of_bounds_objects": 0,
+    "render_qa": "passed"
+  }
+}
