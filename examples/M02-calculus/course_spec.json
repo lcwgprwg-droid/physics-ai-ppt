@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.0",
+  "module_id": "M02",
+  "title": "微积分——从平均速度到瞬时运动",
+  "duration_min": 90,
+  "audience": "高中物理竞赛 / 强基过渡",
+  "notation": {
+    "time": "t",
+    "position": "x(t)",
+    "velocity": "v(t)",
+    "acceleration": "a(t)",
+    "differential_operator": "\\mathrm{d}",
+    "classroom_integral_notation": "x(t)-x(t_0)=\\int_{t_0}^{t}v(t)\\,\\mathrm{d}t",
+    "note": "课堂统一使用 t；若必须引入哑变量，仅在教师母稿解释。"
+  },
+  "formula_levels": {
+    "inline": "≈正文视觉高度",
+    "derivation": "≈正文1.3–1.6倍",
+    "core": "≤正文1.8–2.0倍"
+  },
+  "hard_layout_rules": [
+    "一页一个视觉中心",
+    "禁止超大公式+小字解释",
+    "公式安全区不得被批注/正文/图像侵入",
+    "正式公式不用手写字体",
+    "蓝色手写风仅用于批注/箭头/圈画",
+    "图轴变量使用数学字体"
+  ]
+}
